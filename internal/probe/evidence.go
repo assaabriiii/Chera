@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/assaabriiii/chera/internal/dnscheck"
+	"github.com/assaabriiii/chera/internal/httpcheck"
 	"github.com/assaabriiii/chera/internal/model"
 	"github.com/assaabriiii/chera/internal/netx"
 	"github.com/assaabriiii/chera/internal/tcpcheck"
@@ -134,7 +135,32 @@ func evidence(st *run) []model.Evidence {
 			add("tls", "analysis", model.Fail, "real SNI blocked while the same address answers other names")
 		}
 	}
+
+	if h := st.http; h != nil {
+		switch h.Class {
+		case httpcheck.Failed:
+			add("http", "GET "+h.URL, model.Fail, "%s after %s (%s)", h.ErrKind, ms(h.Duration), netx.Short(h.Err))
+		case httpcheck.OK:
+			add("http", "GET "+h.URL, model.Pass, "HTTP %d in %s%s", h.Status, ms(h.Duration), locationSuffix(h.Location))
+		default:
+			sig := ""
+			if h.Signature != "" {
+				sig = ", signature " + h.Signature
+			}
+			add("http", "GET "+h.URL, model.Fail, "HTTP %d classified as %s%s%s", h.Status, h.Class, sig, locationSuffix(h.Location))
+		}
+		if h.Snippet != "" && h.Class != httpcheck.OK {
+			add("http", "body", model.Info, "%s", h.Snippet)
+		}
+	}
 	return ev
+}
+
+func locationSuffix(loc string) string {
+	if loc == "" {
+		return ""
+	}
+	return " -> " + loc
 }
 
 func handshakeDetail(h tlscheck.Handshake) string {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/assaabriiii/chera/internal/dnscheck"
+	"github.com/assaabriiii/chera/internal/httpcheck"
 	"github.com/assaabriiii/chera/internal/localnet"
 	"github.com/assaabriiii/chera/internal/model"
 	"github.com/assaabriiii/chera/internal/netx"
@@ -186,6 +187,7 @@ type run struct {
 	// verify is a handshake to a suspect system-DNS address, checking
 	// whether it really serves this host.
 	verify *tlscheck.Handshake
+	http   *httpcheck.Result
 }
 
 func (r *Runner) tlsOptions() tlscheck.Options {
@@ -230,6 +232,21 @@ func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) mo
 	if w := tcpcheck.Summarize(st.tcp).Working; w != nil {
 		res := tlscheck.Check(ctx, r.tlsOptions(), w.Addr.String(), t.Host)
 		st.tls = &res
+
+		// Layer 5: HTTP, when the handshake completed. An untrusted
+		// certificate is followed insecurely only to see what the
+		// intercepting middlebox serves.
+		if o := res.Real.Outcome; o == tlscheck.OK || o == tlscheck.CertInvalid {
+			hr := httpcheck.Fetch(ctx, httpcheck.Options{
+				Dialer:     r.cfg.Dialer,
+				Timeout:    r.cfg.Timeout,
+				RootCAs:    r.cfg.RootCAs,
+				Addr:       w.Addr.String(),
+				Insecure:   o == tlscheck.CertInvalid,
+				Signatures: r.cfg.Signatures,
+			}, t.CheckURL())
+			st.http = &hr
+		}
 	}
 	wg.Wait()
 
