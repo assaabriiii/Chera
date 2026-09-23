@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/assaabriiii/chera/internal/dnscheck"
+	"github.com/assaabriiii/chera/internal/localnet"
 )
 
 // Public resolvers queried over plain UDP. Their answers are compared with
@@ -58,6 +59,9 @@ func ApplyDefaults(cfg *Config, resolver string) error {
 	cfg.Resolvers = rs
 	if cfg.InterceptionProbe == "" {
 		cfg.InterceptionProbe = DefaultInterceptionProbe
+	}
+	if cfg.Local == nil {
+		cfg.Local = &localnet.Config{Dialer: cfg.Dialer, Timeout: cfg.Timeout, Baseline: localnet.DefaultBaseline}
 	}
 	return nil
 }

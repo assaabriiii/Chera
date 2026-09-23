@@ -9,6 +9,8 @@ import (
 	"github.com/assaabriiii/chera/internal/dnscheck"
 	"github.com/assaabriiii/chera/internal/model"
 	"github.com/assaabriiii/chera/internal/netx"
+	"github.com/assaabriiii/chera/internal/tcpcheck"
+	"github.com/assaabriiii/chera/internal/tlscheck"
 )
 
 // evidence turns the raw layer results into the list shown by --verbose
@@ -17,6 +19,31 @@ func evidence(st *run) []model.Evidence {
 	var ev []model.Evidence
 	add := func(layer, check string, s model.Status, format string, args ...any) {
 		ev = append(ev, model.Evidence{Layer: layer, Check: check, Status: s, Detail: fmt.Sprintf(format, args...)})
+	}
+
+	if l := st.shared.local; l != nil {
+		down, reason := l.Down()
+		if down {
+			add("local", "connectivity", model.Fail, "local network down: %s", reason)
+		} else {
+			add("local", "connectivity", model.Pass, "default route present")
+		}
+		for _, p := range l.Baseline {
+			if p.OK {
+				add("local", "baseline "+p.Addr, model.Pass, "connected in %s", ms(p.Duration))
+			} else {
+				add("local", "baseline "+p.Addr, model.Warn, "%s", netx.Short(p.Err))
+			}
+		}
+		if v := l.VPNNames(); len(v) > 0 {
+			add("local", "vpn", model.Info, "VPN-like interfaces: %s", strings.Join(v, ", "))
+		}
+		if len(l.ProxyEnv) > 0 {
+			add("local", "proxy env", model.Info, "set: %s", strings.Join(l.ProxyEnv, ", "))
+		}
+		if l.SystemProxy != "" {
+			add("local", "system proxy", model.Info, "%s", l.SystemProxy)
+		}
 	}
 
 	if ic := st.shared.intercept; ic != nil {
@@ -65,8 +92,61 @@ func evidence(st *run) []model.Evidence {
 		if a.InjectedPublic {
 			add("dns", "injection", model.Fail, "plain UDP queries to public resolvers get rewritten answers; DoH does not")
 		}
+		if v := st.verify; v != nil {
+			if v.Outcome == tlscheck.OK {
+				add("dns", "verify system IP", model.Pass, "%s serves a valid certificate for %s (CDN variation)", addrList(a.Suspects[:1]), st.target.Host)
+			} else {
+				add("dns", "verify system IP", model.Fail, "%s: %s", addrList(a.Suspects[:1]), handshakeDetail(*v))
+			}
+		}
+	}
+
+	for _, t := range st.tcp {
+		if t.Outcome == tcpcheck.OK {
+			add("tcp", t.Addr.String(), model.Pass, "connected in %s", ms(t.Duration))
+		} else {
+			add("tcp", t.Addr.String(), model.Fail, "%s after %s (%s)", t.Outcome, ms(t.Duration), netx.Short(t.Err))
+		}
+	}
+	if st.resolved && len(st.analysis.Reference) > 0 && len(st.tcp) == 0 {
+		add("tcp", "connect", model.Skip, "no reference address to connect to")
+	}
+
+	if t := st.tls; t != nil {
+		for _, h := range []*tlscheck.Handshake{&t.Real, t.Neutral, t.NoSNI} {
+			if h == nil {
+				continue
+			}
+			name := "sni=" + h.SNI
+			if h.SNI == "" {
+				name = "no sni"
+			}
+			status := model.Fail
+			switch {
+			case h.Outcome == tlscheck.OK:
+				status = model.Pass
+			case h != &t.Real && h.Reached():
+				status = model.Pass
+			}
+			add("tls", name, status, "%s", handshakeDetail(*h))
+		}
+		if t.SNIFiltered() {
+			add("tls", "analysis", model.Fail, "real SNI blocked while the same address answers other names")
+		}
 	}
 	return ev
+}
+
+func handshakeDetail(h tlscheck.Handshake) string {
+	switch h.Outcome {
+	case tlscheck.OK:
+		return fmt.Sprintf("%s in %s, issuer %q", h.Version, ms(h.Duration), h.Issuer)
+	case tlscheck.CertInvalid:
+		return fmt.Sprintf("certificate invalid (%s), issuer %q: %s", h.CertProblem, h.Issuer, netx.Short(h.Err))
+	case tlscheck.Alert:
+		return fmt.Sprintf("server sent TLS alert: %v", h.Err)
+	}
+	return fmt.Sprintf("%s after %s (%s)", h.Outcome, ms(h.Duration), netx.Short(h.Err))
 }
 
 func dnsErr(a dnscheck.Answer) string {

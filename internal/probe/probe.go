@@ -5,14 +5,18 @@ package probe
 import (
 	"context"
 	"crypto/x509"
+	"net/netip"
 	"runtime"
 	"sync"
 	"time"
 
 	"github.com/assaabriiii/chera/internal/dnscheck"
+	"github.com/assaabriiii/chera/internal/localnet"
 	"github.com/assaabriiii/chera/internal/model"
 	"github.com/assaabriiii/chera/internal/netx"
 	"github.com/assaabriiii/chera/internal/signatures"
+	"github.com/assaabriiii/chera/internal/tcpcheck"
+	"github.com/assaabriiii/chera/internal/tlscheck"
 )
 
 // Config holds everything the layers need. Tests fill it with fakes; the
@@ -40,6 +44,14 @@ type Config struct {
 	InterceptionProbe string
 	// RootCAs verifies certificates; nil means the system pool.
 	RootCAs *x509.CertPool
+	// Port is the TCP port for TCP, TLS and HTTPS checks (443 in real use).
+	Port int
+	// NeutralSNI is the server name used to test SNI filtering.
+	NeutralSNI string
+	// MaxAddrs limits how many of a target's addresses are probed.
+	MaxAddrs int
+	// Local configures the local network layer; nil skips it.
+	Local *localnet.Config
 }
 
 // Runner executes the pipeline.
@@ -60,6 +72,15 @@ func fillDefaults(cfg *Config) {
 	if cfg.Signatures == nil {
 		cfg.Signatures = signatures.Builtin()
 	}
+	if cfg.Port == 0 {
+		cfg.Port = 443
+	}
+	if cfg.NeutralSNI == "" {
+		cfg.NeutralSNI = tlscheck.DefaultNeutralSNI
+	}
+	if cfg.MaxAddrs <= 0 {
+		cfg.MaxAddrs = 2
+	}
 }
 
 // New returns a Runner, filling unset fields with safe defaults.
@@ -71,6 +92,7 @@ func New(cfg Config) *Runner {
 // shared holds results that are measured once per run, not per target.
 type shared struct {
 	intercept *dnscheck.Interception
+	local     *localnet.Result
 }
 
 // Run diagnoses all targets and returns the report. Targets keep their
@@ -84,17 +106,29 @@ func (r *Runner) Run(ctx context.Context, targets []model.Target) *model.Report 
 		Arch:    runtime.GOARCH,
 		Targets: make([]model.TargetReport, len(targets)),
 	}
-	rep.Local.ProxyFlag = r.cfg.ProxyInUse
 
 	var sh shared
+	var wg sync.WaitGroup
 	if r.cfg.InterceptionProbe != "" {
-		ic := dnscheck.CheckInterception(ctx, r.cfg.InterceptionProbe, r.cfg.Timeout)
-		sh.intercept = &ic
-		rep.Local.DNSIntercept = ic.Detected
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			ic := dnscheck.CheckInterception(ctx, r.cfg.InterceptionProbe, r.cfg.Timeout)
+			sh.intercept = &ic
+		}()
 	}
+	if r.cfg.Local != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			lr := localnet.Check(ctx, *r.cfg.Local)
+			sh.local = &lr
+		}()
+	}
+	wg.Wait()
+	rep.Local = localSummary(sh, r.cfg.ProxyInUse)
 
 	sem := make(chan struct{}, r.cfg.Concurrency)
-	var wg sync.WaitGroup
 	for i, t := range targets {
 		wg.Add(1)
 		go func(i int, t model.Target) {
@@ -112,6 +146,34 @@ func (r *Runner) Run(ctx context.Context, targets []model.Target) *model.Report 
 	return rep
 }
 
+func localSummary(sh shared, proxy bool) model.LocalSummary {
+	ls := model.LocalSummary{Up: true, DefaultRoute: true, ProxyFlag: proxy}
+	if sh.intercept != nil {
+		ls.DNSIntercept = sh.intercept.Detected
+	}
+	if l := sh.local; l != nil {
+		down, _ := l.Down()
+		ls.Up = !down
+		ls.DefaultRoute = l.DefaultRoute
+		for _, i := range l.Interfaces {
+			if i.Up && !i.Loop && i.HasAddr {
+				ls.Interfaces = append(ls.Interfaces, i.Name)
+			}
+		}
+		ls.VPNInterfaces = l.VPNNames()
+		ls.ProxyEnv = l.ProxyEnv
+		ls.SystemProxy = l.SystemProxy
+		for _, p := range l.Baseline {
+			if p.OK {
+				ls.Reachable = append(ls.Reachable, p.Addr)
+			} else {
+				ls.Unreachable = append(ls.Unreachable, p.Addr)
+			}
+		}
+	}
+	return ls
+}
+
 // run collects every layer's result for one target.
 type run struct {
 	target   model.Target
@@ -119,14 +181,57 @@ type run struct {
 	dns      dnscheck.Result
 	analysis dnscheck.Analysis
 	resolved bool
+	tcp      []tcpcheck.Result
+	tls      *tlscheck.Result
+	// verify is a handshake to a suspect system-DNS address, checking
+	// whether it really serves this host.
+	verify *tlscheck.Handshake
+}
+
+func (r *Runner) tlsOptions() tlscheck.Options {
+	return tlscheck.Options{Dialer: r.cfg.Dialer, Timeout: r.cfg.Timeout, RootCAs: r.cfg.RootCAs, NeutralSNI: r.cfg.NeutralSNI}
+}
+
+func (r *Runner) addrPort(a netip.Addr) netip.AddrPort {
+	return netip.AddrPortFrom(a, uint16(r.cfg.Port))
 }
 
 func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) model.TargetReport {
 	st := &run{target: t, shared: sh}
 
+	// Layer 2: DNS.
 	st.dns = dnscheck.Resolve(ctx, t.Host, r.cfg.Resolvers, r.cfg.Timeout)
 	st.analysis = dnscheck.Analyze(st.dns, r.cfg.Signatures)
 	st.resolved = true
+
+	var wg sync.WaitGroup
+	if len(st.analysis.Suspects) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			h := tlscheck.Do(ctx, r.tlsOptions(), r.addrPort(st.analysis.Suspects[0]).String(), t.Host, t.Host)
+			st.verify = &h
+		}()
+	}
+
+	// Layer 3: TCP to the reference (correct) addresses.
+	var addrs []netip.AddrPort
+	for _, a := range st.analysis.Reference {
+		if len(addrs) == r.cfg.MaxAddrs {
+			break
+		}
+		addrs = append(addrs, r.addrPort(a))
+	}
+	if len(addrs) > 0 {
+		st.tcp = tcpcheck.ProbeAll(ctx, r.cfg.Dialer, addrs, r.cfg.Timeout)
+	}
+
+	// Layer 4: TLS/SNI on the first address that accepted a connection.
+	if w := tcpcheck.Summarize(st.tcp).Working; w != nil {
+		res := tlscheck.Check(ctx, r.tlsOptions(), w.Addr.String(), t.Host)
+		st.tls = &res
+	}
+	wg.Wait()
 
 	return model.TargetReport{
 		Target:     t,
