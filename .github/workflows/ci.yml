@@ -43,7 +43,7 @@ jobs:
         run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - name: Check go.mod is tidy
         run: go mod tidy -diff
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           # Must be built with a Go at least as new as the one above.
           version: latest
