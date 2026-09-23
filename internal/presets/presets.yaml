@@ -1,0 +1,121 @@
+# Built-in presets for chera.
+#
+# A preset is either a list of targets or a list of other presets to
+# include. Users can add or override presets in
+# <user config dir>/chera/presets.yaml or with --presets FILE, using the same
+# format. See CONTRIBUTING.md.
+#
+# Target fields:
+#   host         DNS name to diagnose (required)
+#   url          lightweight HTTPS URL for the HTTP layer (default https://<host>/)
+#   status_page  Statuspage-compatible status.json URL for outage checks
+#   speed_url    URL used by --speed (default: url)
+#   kind         ecosystem, used for remedy hints (github, pypi, npm, docker,
+#                huggingface, ai, go, crates)
+
+default: dev
+
+presets:
+  github:
+    description: GitHub web, API, raw files, releases and archives
+    targets:
+      - host: github.com
+        url: https://github.com/robots.txt
+        status_page: https://www.githubstatus.com/api/v2/status.json
+        kind: github
+      - host: api.github.com
+        url: https://api.github.com/
+        status_page: https://www.githubstatus.com/api/v2/status.json
+        kind: github
+      - host: raw.githubusercontent.com
+        url: https://raw.githubusercontent.com/github/gitignore/main/Go.gitignore
+        status_page: https://www.githubstatus.com/api/v2/status.json
+        kind: github
+      - host: objects.githubusercontent.com
+        url: https://objects.githubusercontent.com/
+        status_page: https://www.githubstatus.com/api/v2/status.json
+        kind: github
+      - host: codeload.github.com
+        url: https://codeload.github.com/
+        status_page: https://www.githubstatus.com/api/v2/status.json
+        kind: github
+
+  python:
+    description: PyPI index and package files
+    targets:
+      - host: pypi.org
+        url: https://pypi.org/robots.txt
+        status_page: https://status.python.org/api/v2/status.json
+        kind: pypi
+      - host: files.pythonhosted.org
+        url: https://files.pythonhosted.org/
+        status_page: https://status.python.org/api/v2/status.json
+        kind: pypi
+
+  node:
+    description: npm registry
+    targets:
+      - host: registry.npmjs.org
+        url: https://registry.npmjs.org/-/ping
+        status_page: https://status.npmjs.org/api/v2/status.json
+        kind: npm
+
+  docker:
+    description: Docker Hub registry, auth and blob CDN
+    targets:
+      - host: registry-1.docker.io
+        url: https://registry-1.docker.io/v2/
+        kind: docker
+      - host: auth.docker.io
+        url: https://auth.docker.io/token?service=registry.docker.io
+        kind: docker
+      - host: production.cloudflare.docker.com
+        url: https://production.cloudflare.docker.com/
+        kind: docker
+
+  huggingface:
+    description: Hugging Face Hub and LFS CDN
+    targets:
+      - host: huggingface.co
+        url: https://huggingface.co/robots.txt
+        kind: huggingface
+      - host: cdn-lfs.huggingface.co
+        url: https://cdn-lfs.huggingface.co/
+        kind: huggingface
+
+  ai:
+    description: AI model APIs
+    targets:
+      - host: api.openai.com
+        url: https://api.openai.com/v1/models
+        status_page: https://status.openai.com/api/v2/status.json
+        kind: ai
+      - host: api.anthropic.com
+        url: https://api.anthropic.com/v1/models
+        status_page: https://status.anthropic.com/api/v2/status.json
+        kind: ai
+      - host: generativelanguage.googleapis.com
+        url: https://generativelanguage.googleapis.com/v1beta/models
+        kind: ai
+
+  go:
+    description: Go module proxy
+    targets:
+      - host: proxy.golang.org
+        url: https://proxy.golang.org/
+        kind: go
+
+  rust:
+    description: crates.io
+    targets:
+      - host: crates.io
+        url: https://crates.io/
+        kind: crates
+
+  dev:
+    description: Default developer preset (GitHub, Python, Node, Docker, Go)
+    include: [github, python, node, docker, go]
+
+  all:
+    description: Every built-in target
+    include: [github, python, node, docker, huggingface, ai, go, rust]

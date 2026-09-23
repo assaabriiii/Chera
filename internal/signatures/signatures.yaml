@@ -1,0 +1,99 @@
+# Known filtering and geo-blocking signatures.
+#
+# Extend or override these in <user config dir>/chera/signatures.yaml or with
+# --signatures FILE. Entries from user files are appended to the built-in
+# lists. See CONTRIBUTING.md before adding a signature: every entry needs a
+# source (a public report, a captured response, etc.) in the pull request.
+
+# Addresses that DNS answers point to when a resolver or an on-path injector
+# rewrites a response to send users to a block page. Any DNS answer that
+# contains one of these is treated as poisoned.
+block_ips:
+  # Iran: national filtering block page ("peyvandha" landing page).
+  - 10.10.34.34
+  - 10.10.34.35
+  - 10.10.34.36
+
+# Government or ISP block pages. A signature matches when the response's
+# redirect Location contains one of url_contains, or the body contains one of
+# body_contains (case-insensitive).
+block_pages:
+  - name: iran-peyvandha
+    url_contains:
+      - peyvandha.ir
+      - 10.10.34.34
+      - 10.10.34.35
+      - 10.10.34.36
+    body_contains:
+      - peyvandha.ir
+      - "http://10.10.34.34"
+      - "http://10.10.34.35"
+      - "http://10.10.34.36"
+  - name: iran-internet-ir
+    url_contains:
+      - internet.ir/blocked
+    body_contains:
+      - "internet.ir/blocked"
+
+# Provider-side region blocks (usually because of sanctions or export
+# control). These come from the real service, so the fix is different from
+# network filtering. A signature matches when the status is listed (or the
+# list is empty) AND the body contains one of body_contains. host_suffix
+# optionally limits a signature to one provider.
+geo_blocks:
+  - name: openai-unsupported-region
+    host_suffix: openai.com
+    status: [403]
+    body_contains:
+      - unsupported_country_region_territory
+      - "Country, region, or territory not supported"
+  - name: anthropic-unsupported-region
+    host_suffix: anthropic.com
+    status: [403]
+    body_contains:
+      - "Request not allowed"
+      - "not available in your region"
+  - name: google-user-location
+    host_suffix: googleapis.com
+    status: [400, 403]
+    body_contains:
+      - "User location is not supported"
+  - name: docker-export-control
+    host_suffix: docker.io
+    status: [403]
+    body_contains:
+      - "export control"
+      - "US export"
+  - name: cloudflare-country-ban
+    status: [403]
+    body_contains:
+      - "error code: 1009"
+      - "has banned the country or region your IP address is in"
+  - name: generic-trade-restriction
+    status: [403, 451]
+    body_contains:
+      - "trade restriction"
+      - "export control regulations"
+      - "sanctioned countr"
+      - "not available in your country"
+      - "not available in your region"
+      - "unsupported region"
+      - "unsupported_country"
+
+# Issuer organisations of TLS inspection products. A certificate chain that
+# validates but is issued by one of these means TLS traffic is decrypted by a
+# middlebox (often a corporate firewall or antivirus).
+interception_issuers:
+  - Fortinet
+  - FortiGate
+  - Sophos
+  - Kaspersky
+  - ESET
+  - Zscaler
+  - Palo Alto Networks
+  - Cisco Umbrella
+  - Blue Coat
+  - Netfilter SSL
+  - mitmproxy
+  - Charles Proxy
+  - Fiddler
