@@ -4,6 +4,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"strconv"
 	"testing"
@@ -37,17 +38,34 @@ type scenario struct {
 	hijackDNS bool
 	// noRoute simulates a machine without a default route.
 	noRoute bool
+	// statusIndicator, when set, is served by a fake status page.
+	statusIndicator string
+	// speed enables the throttling layer with a fast local baseline.
+	speed bool
 }
 
 type harness struct {
-	cfg    Config
-	dialer *testutil.FakeDialer
+	cfg       Config
+	dialer    *testutil.FakeDialer
+	statusURL string
 }
 
 func okHandler(status int, body string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		w.Write([]byte(body))
+	})
+}
+
+// slowHandler answers the HTTP check quickly but trickles a larger body,
+// like a throttled link: about 100 KB/s.
+func slowHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for i := 0; i < 24; i++ {
+			w.Write(make([]byte, 4<<10))
+			w.(http.Flusher).Flush()
+			time.Sleep(40 * time.Millisecond)
+		}
 	})
 }
 
@@ -98,13 +116,26 @@ func setup(t *testing.T, sc scenario) *harness {
 		d.Blackhole[net.JoinHostPort(a, strconv.Itoa(port))] = true
 	}
 
+	var statusURL string
+	if sc.statusIndicator != "" {
+		st := httptest.NewServer(okHandler(200, `{"status":{"indicator":"`+sc.statusIndicator+`","description":"Major Service Outage"}}`))
+		t.Cleanup(st.Close)
+		statusURL = st.URL
+	}
+	baselineSpeed := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(make([]byte, 256<<10))
+	}))
+	t.Cleanup(baselineSpeed.Close)
+
 	timeout := time.Second
 	cfg := Config{
-		Timeout:     timeout,
-		Concurrency: 4,
-		Dialer:      d,
-		RootCAs:     ca.Pool,
-		Port:        port,
+		Speed:            sc.speed,
+		SpeedBaselineURL: baselineSpeed.URL,
+		Timeout:          timeout,
+		Concurrency:      4,
+		Dialer:           d,
+		RootCAs:          ca.Pool,
+		Port:             port,
 		Resolvers: dnscheck.Resolvers{
 			System: &dnscheck.System{R: &net.Resolver{
 				PreferGo: true,
@@ -128,12 +159,12 @@ func setup(t *testing.T, sc scenario) *harness {
 			SystemProxy: func(context.Context) string { return "" },
 		},
 	}
-	return &harness{cfg: cfg, dialer: d}
+	return &harness{cfg: cfg, dialer: d, statusURL: statusURL}
 }
 
 func (h *harness) run(t *testing.T, host string) model.TargetReport {
 	t.Helper()
-	rep := New(h.cfg).Run(context.Background(), []model.Target{{Host: host}})
+	rep := New(h.cfg).Run(context.Background(), []model.Target{{Host: host, StatusPage: h.statusURL}})
 	if len(rep.Targets) != 1 {
 		t.Fatalf("got %d targets", len(rep.Targets))
 	}
@@ -172,6 +203,11 @@ func TestIntegrationVerdicts(t *testing.T) {
 			handler: okHandler(403, `{"error":{"code":"unsupported_country_region_territory","message":"Country, region, or territory not supported"}}`)},
 			model.ProviderGeoBlock, model.High, nil},
 		{"upstream outage", scenario{host: "svc.test", systemDNS: lo, dohDNS: lo, handler: okHandler(503, "unavailable")}, model.UpstreamOutage, model.Medium, nil},
+		{"upstream outage confirmed", scenario{host: "svc.test", systemDNS: lo, dohDNS: lo, handler: okHandler(502, "bad gateway"), statusIndicator: "major"},
+			model.UpstreamOutage, model.High, nil},
+		{"throttled", scenario{host: "svc.test", systemDNS: lo, dohDNS: lo, speed: true, handler: slowHandler()}, model.Throttled, model.Medium, nil},
+		{"speed check on a fast service", scenario{host: "svc.test", systemDNS: lo, dohDNS: lo, speed: true, handler: okHandler(200, string(make([]byte, 128<<10)))},
+			model.OK, model.High, nil},
 		{"inconclusive", scenario{host: "svc.test"}, model.Inconclusive, model.Low, nil},
 	}
 	for _, tt := range tests {

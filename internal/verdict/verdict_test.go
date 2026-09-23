@@ -11,7 +11,9 @@ import (
 	"github.com/assaabriiii/chera/internal/localnet"
 	"github.com/assaabriiii/chera/internal/model"
 	"github.com/assaabriiii/chera/internal/netx"
+	"github.com/assaabriiii/chera/internal/outage"
 	"github.com/assaabriiii/chera/internal/signatures"
+	"github.com/assaabriiii/chera/internal/speed"
 	"github.com/assaabriiii/chera/internal/tcpcheck"
 	"github.com/assaabriiii/chera/internal/testutil"
 	"github.com/assaabriiii/chera/internal/tlscheck"
@@ -164,6 +166,30 @@ func TestDecide(t *testing.T) {
 		{"http timeout", func(in *Input) {
 			in.HTTP = &httpcheck.Result{Class: httpcheck.Failed, ErrKind: netx.KindTimeout, Err: context.DeadlineExceeded}
 		}, model.Inconclusive, model.Low, "http.timeout", nil},
+		{"5xx confirmed by status page", func(in *Input) {
+			in.HTTP = &httpcheck.Result{Status: 503, Class: httpcheck.ServerError}
+			in.Outage = &outage.Result{Indicator: "major", Description: "Partial System Outage"}
+		}, model.UpstreamOutage, model.High, "outage.confirmed", nil},
+		{"timeout with minor incident", func(in *Input) {
+			in.HTTP = &httpcheck.Result{Class: httpcheck.Failed, ErrKind: netx.KindTimeout, Err: context.DeadlineExceeded}
+			in.Outage = &outage.Result{Indicator: "minor"}
+		}, model.UpstreamOutage, model.Medium, "outage.confirmed", nil},
+		{"5xx with healthy status page", func(in *Input) {
+			in.HTTP = &httpcheck.Result{Status: 502, Class: httpcheck.ServerError}
+			in.Outage = &outage.Result{Indicator: "none"}
+		}, model.UpstreamOutage, model.Medium, "http.5xx", nil},
+		{"unresolvable with outage", func(in *Input) {
+			in.DNS = dnscheck.Analysis{Unresolvable: true}
+			in.TCP, in.TLS, in.HTTP = nil, nil, nil
+			in.Outage = &outage.Result{Indicator: "critical"}
+		}, model.UpstreamOutage, model.High, "outage.confirmed", nil},
+		{"throttled throughput", func(in *Input) {
+			in.Speed = &speed.Result{Throttled: true, Kind: "throughput"}
+		}, model.Throttled, model.Medium, "speed.throughput", nil},
+		{"throttled handshake", func(in *Input) {
+			in.Speed = &speed.Result{Throttled: true, Kind: "handshake"}
+		}, model.Throttled, model.Medium, "speed.handshake", nil},
+		{"speed fine", func(in *Input) { in.Speed = &speed.Result{} }, model.OK, model.High, "ok.http", nil},
 		{"http timeout with dns problem prefers dns", func(in *Input) {
 			in.DNS.BlockIPs = testutil.Addrs("10.10.34.35")
 			in.HTTP = &httpcheck.Result{Class: httpcheck.Failed, ErrKind: netx.KindTimeout, Err: context.DeadlineExceeded}

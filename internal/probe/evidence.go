@@ -10,6 +10,7 @@ import (
 	"github.com/assaabriiii/chera/internal/httpcheck"
 	"github.com/assaabriiii/chera/internal/model"
 	"github.com/assaabriiii/chera/internal/netx"
+	"github.com/assaabriiii/chera/internal/speed"
 	"github.com/assaabriiii/chera/internal/tcpcheck"
 	"github.com/assaabriiii/chera/internal/tlscheck"
 )
@@ -151,6 +152,36 @@ func evidence(st *run) []model.Evidence {
 		}
 		if h.Snippet != "" && h.Class != httpcheck.OK {
 			add("http", "body", model.Info, "%s", h.Snippet)
+		}
+	}
+
+	if sp := st.speed; sp != nil {
+		for _, m := range []struct {
+			name string
+			m    speed.Measurement
+		}{{"target", sp.Target}, {"baseline", sp.Baseline}} {
+			if m.m.Err != nil {
+				add("speed", m.name, model.Warn, "%s: %s", m.m.URL, netx.Short(m.m.Err))
+				continue
+			}
+			add("speed", m.name, model.Info, "HTTP %d, %d bytes in %s (%s), TLS handshake %s",
+				m.m.Status, m.m.Bytes, ms(m.m.Duration), speed.FormatRate(m.m.Rate()), ms(m.m.Handshake))
+		}
+		if sp.Throttled {
+			add("speed", "analysis", model.Fail, "severe %s degradation compared with the baseline", sp.Kind)
+		} else {
+			add("speed", "analysis", model.Pass, "no severe degradation detected")
+		}
+	}
+
+	if o := st.outage; o != nil {
+		switch {
+		case o.Err != nil:
+			add("outage", "status page", model.Warn, "%s: %s (inconclusive)", o.URL, netx.Short(o.Err))
+		case o.Confirmed():
+			add("outage", "status page", model.Fail, "%s: %s (%s)", o.URL, o.Description, o.Indicator)
+		default:
+			add("outage", "status page", model.Pass, "%s: %s", o.URL, o.Description)
 		}
 	}
 	return ev

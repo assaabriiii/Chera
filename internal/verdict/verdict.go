@@ -10,13 +10,16 @@ package verdict
 import (
 	"fmt"
 	"net/netip"
+	"time"
 
 	"github.com/assaabriiii/chera/internal/dnscheck"
 	"github.com/assaabriiii/chera/internal/httpcheck"
 	"github.com/assaabriiii/chera/internal/localnet"
 	"github.com/assaabriiii/chera/internal/model"
 	"github.com/assaabriiii/chera/internal/netx"
+	"github.com/assaabriiii/chera/internal/outage"
 	"github.com/assaabriiii/chera/internal/signatures"
+	"github.com/assaabriiii/chera/internal/speed"
 	"github.com/assaabriiii/chera/internal/tcpcheck"
 	"github.com/assaabriiii/chera/internal/tlscheck"
 )
@@ -31,6 +34,8 @@ type Input struct {
 	TLS        *tlscheck.Result
 	Verify     *tlscheck.Handshake
 	HTTP       *httpcheck.Result
+	Outage     *outage.Result
+	Speed      *speed.Result
 	Signatures *signatures.Set
 }
 
@@ -73,6 +78,8 @@ func Decide(in Input) Decision {
 	switch {
 	case pathD == nil && dnsD != nil:
 		return *dnsD
+	case pathD == nil && in.DNS.Unresolvable && in.Outage != nil && in.Outage.Confirmed():
+		return *outageDecision(in.Outage)
 	case pathD == nil && in.DNS.Unresolvable:
 		return *decide(model.Inconclusive, model.Low, "dns.unresolvable")
 	case pathD == nil:
@@ -197,17 +204,42 @@ func pathDecision(in Input, sum tcpcheck.Summary) *Decision {
 	case httpcheck.Legal:
 		return decide(model.ProviderGeoBlock, model.Medium, "http.451")
 	case httpcheck.ServerError:
+		if in.Outage != nil && in.Outage.Confirmed() {
+			return outageDecision(in.Outage)
+		}
 		return decide(model.UpstreamOutage, model.Medium, "http.5xx", "status", status)
 	case httpcheck.Failed:
 		switch h.ErrKind {
 		case netx.KindReset, netx.KindEOF:
 			return decide(model.ConnectionReset, model.Medium, "http.reset")
+		}
+		if in.Outage != nil && in.Outage.Confirmed() {
+			return outageDecision(in.Outage)
+		}
+		switch h.ErrKind {
 		case netx.KindTimeout:
 			return decide(model.Inconclusive, model.Low, "http.timeout")
 		}
 		return decide(model.Inconclusive, model.Low, "http.error", "error", netx.Short(h.Err))
 	}
+	if sp := in.Speed; sp != nil && sp.Throttled {
+		if sp.Kind == "handshake" {
+			return decide(model.Throttled, model.Medium, "speed.handshake",
+				"target", sp.Target.Handshake.Round(time.Millisecond).String(),
+				"baseline", sp.Baseline.Handshake.Round(time.Millisecond).String())
+		}
+		return decide(model.Throttled, model.Medium, "speed.throughput",
+			"target", speed.FormatRate(sp.Target.Rate()), "baseline", speed.FormatRate(sp.Baseline.Rate()))
+	}
 	return decide(model.OK, model.High, "ok.http", "status", status)
+}
+
+func outageDecision(o *outage.Result) *Decision {
+	conf := model.Medium
+	if o.Severe() {
+		conf = model.High
+	}
+	return decide(model.UpstreamOutage, conf, "outage.confirmed", "description", o.Description)
 }
 
 func first(lists ...[]netip.Addr) string {

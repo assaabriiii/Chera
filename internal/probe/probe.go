@@ -4,7 +4,10 @@ package probe
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
+	"net"
+	"net/http"
 	"net/netip"
 	"runtime"
 	"sync"
@@ -15,7 +18,9 @@ import (
 	"github.com/assaabriiii/chera/internal/localnet"
 	"github.com/assaabriiii/chera/internal/model"
 	"github.com/assaabriiii/chera/internal/netx"
+	"github.com/assaabriiii/chera/internal/outage"
 	"github.com/assaabriiii/chera/internal/signatures"
+	"github.com/assaabriiii/chera/internal/speed"
 	"github.com/assaabriiii/chera/internal/tcpcheck"
 	"github.com/assaabriiii/chera/internal/tlscheck"
 	"github.com/assaabriiii/chera/internal/verdict"
@@ -54,6 +59,10 @@ type Config struct {
 	MaxAddrs int
 	// Local configures the local network layer; nil skips it.
 	Local *localnet.Config
+	// HTTPClient fetches status pages and the speed baseline.
+	HTTPClient *http.Client
+	// SpeedBaselineURL is downloaded to compare throughput against.
+	SpeedBaselineURL string
 }
 
 // Runner executes the pipeline.
@@ -83,6 +92,30 @@ func fillDefaults(cfg *Config) {
 	if cfg.MaxAddrs <= 0 {
 		cfg.MaxAddrs = 2
 	}
+	if cfg.HTTPClient == nil {
+		cfg.HTTPClient = &http.Client{Transport: pinnedTransport(cfg, "")}
+	}
+	if cfg.SpeedBaselineURL == "" {
+		cfg.SpeedBaselineURL = speed.DefaultBaselineURL
+	}
+}
+
+// pinnedTransport returns an HTTP transport that uses cfg.Dialer and,
+// when addr is set, sends every connection to that verified address.
+func pinnedTransport(cfg *Config, addr string) *http.Transport {
+	d := cfg.Dialer
+	return &http.Transport{
+		Proxy: nil,
+		DialContext: func(ctx context.Context, network, a string) (net.Conn, error) {
+			if addr != "" {
+				a = addr
+			}
+			return d.DialContext(ctx, network, a)
+		},
+		TLSClientConfig:     &tls.Config{RootCAs: cfg.RootCAs, MinVersion: tls.VersionTLS12},
+		TLSHandshakeTimeout: cfg.Timeout,
+		DisableKeepAlives:   addr != "",
+	}
 }
 
 // New returns a Runner, filling unset fields with safe defaults.
@@ -95,6 +128,9 @@ func New(cfg Config) *Runner {
 type shared struct {
 	intercept *dnscheck.Interception
 	local     *localnet.Result
+
+	baselineOnce sync.Once
+	baseline     speed.Measurement
 }
 
 // Run diagnoses all targets and returns the report. Targets keep their
@@ -128,7 +164,7 @@ func (r *Runner) Run(ctx context.Context, targets []model.Target) *model.Report 
 		}()
 	}
 	wg.Wait()
-	rep.Local = localSummary(sh, r.cfg.ProxyInUse)
+	rep.Local = localSummary(&sh, r.cfg.ProxyInUse)
 
 	sem := make(chan struct{}, r.cfg.Concurrency)
 	for i, t := range targets {
@@ -148,7 +184,7 @@ func (r *Runner) Run(ctx context.Context, targets []model.Target) *model.Report 
 	return rep
 }
 
-func localSummary(sh shared, proxy bool) model.LocalSummary {
+func localSummary(sh *shared, proxy bool) model.LocalSummary {
 	ls := model.LocalSummary{Up: true, DefaultRoute: true, ProxyFlag: proxy}
 	if sh.intercept != nil {
 		ls.DNSIntercept = sh.intercept.Detected
@@ -189,6 +225,8 @@ type run struct {
 	// whether it really serves this host.
 	verify *tlscheck.Handshake
 	http   *httpcheck.Result
+	outage *outage.Result
+	speed  *speed.Result
 }
 
 func (r *Runner) tlsOptions() tlscheck.Options {
@@ -248,8 +286,21 @@ func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) mo
 			}, t.CheckURL())
 			st.http = &hr
 		}
+
+		// Layer 6: throttling, only on request and only when the service
+		// answers normally.
+		if r.cfg.Speed && st.http != nil && st.http.Class == httpcheck.OK {
+			st.speed = r.measureSpeed(ctx, t, w.Addr.String(), sh)
+		}
 	}
 	wg.Wait()
+
+	// Layer 7: when the path looks clean but the service fails, ask its
+	// status page.
+	if t.StatusPage != "" && r.pathCleanButFailing(st) {
+		o := outage.Check(ctx, r.cfg.HTTPClient, t.StatusPage, r.cfg.Timeout)
+		st.outage = &o
+	}
 
 	d := verdict.Decide(verdict.Input{
 		Local:      sh.local,
@@ -259,6 +310,8 @@ func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) mo
 		TLS:        st.tls,
 		Verify:     st.verify,
 		HTTP:       st.http,
+		Outage:     st.outage,
+		Speed:      st.speed,
 		Signatures: r.cfg.Signatures,
 	})
 	return model.TargetReport{
@@ -269,4 +322,32 @@ func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) mo
 		Also:       d.Also,
 		Evidence:   evidence(st),
 	}
+}
+
+func (r *Runner) pathCleanButFailing(st *run) bool {
+	if st.analysis.Unresolvable {
+		return true
+	}
+	if st.tls == nil || st.tls.Real.Outcome != tlscheck.OK || st.http == nil {
+		return false
+	}
+	return st.http.Class == httpcheck.ServerError || st.http.Class == httpcheck.Failed
+}
+
+func (r *Runner) measureSpeed(ctx context.Context, t model.Target, addr string, sh *shared) *speed.Result {
+	timeout := 2 * r.cfg.Timeout
+	sh.baselineOnce.Do(func() {
+		sh.baseline = speed.Measure(ctx, r.cfg.HTTPClient, r.cfg.SpeedBaselineURL, timeout)
+	})
+	u := t.SpeedURL
+	if u == "" {
+		u = t.CheckURL()
+	}
+	client := &http.Client{
+		Transport:     pinnedTransport(&r.cfg, addr),
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	m := speed.Measure(ctx, client, u, timeout)
+	res := speed.Compare(m, sh.baseline)
+	return &res
 }
