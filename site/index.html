@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chera: why is this service unreachable?</title>
+<meta name="description" content="Chera is a network diagnosis CLI that explains why a service is unreachable: DNS poisoning, IP blocking, SNI filtering, block pages, provider geo-blocks, throttling or outages.">
+<meta property="og:title" content="Chera: why is this service unreachable?">
+<meta property="og:description" content="A single-binary CLI that tells DNS poisoning, SNI filtering, IP blocking and provider geo-blocks apart, with evidence and a confidence level.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%230f766e'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='700'>?</text></svg>">
+<style>
+:root {
+  --bg: #fbfaf7; --surface: #ffffff; --text: #1c1917; --muted: #57534e;
+  --border: #e7e5e4; --accent: #0f766e; --accent-soft: #ccfbf1;
+  --term-bg: #111827; --term-text: #e5e7eb; --ok: #16a34a; --bad: #dc2626; --warn: #ca8a04;
+  --code-bg: #f5f5f4;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0c0a09; --surface: #1c1917; --text: #f5f5f4; --muted: #a8a29e;
+    --border: #292524; --accent: #2dd4bf; --accent-soft: #134e4a;
+    --term-bg: #030712; --code-bg: #292524;
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Vazirmatn", Tahoma, sans-serif;
+}
+a { color: var(--accent); }
+.wrap { max-width: 1040px; margin: 0 auto; padding: 0 20px; }
+header.top { border-bottom: 1px solid var(--border); }
+header.top .wrap { display: flex; align-items: center; justify-content: space-between; height: 60px; gap: 16px; }
+.brand { font-weight: 700; font-size: 18px; color: var(--text); text-decoration: none; display: flex; align-items: center; gap: 10px; }
+.brand .logo { width: 28px; height: 28px; border-radius: 7px; background: var(--accent); color: var(--bg); display: grid; place-items: center; font-weight: 800; }
+nav { display: flex; align-items: center; gap: 18px; }
+nav a { color: var(--muted); text-decoration: none; font-size: 15px; }
+nav a:hover { color: var(--text); }
+.lang-toggle { border: 1px solid var(--border); background: var(--surface); color: var(--text); border-radius: 8px; padding: 5px 10px; cursor: pointer; font: inherit; font-size: 14px; }
+.hero { padding: 72px 0 48px; }
+.hero h1 { font-size: clamp(32px, 5vw, 52px); line-height: 1.1; margin: 0 0 18px; letter-spacing: -0.02em; }
+.hero h1 .fa-word { color: var(--accent); }
+.hero p.lead { font-size: 19px; color: var(--muted); max-width: 680px; margin: 0 0 28px; }
+.cta { display: flex; gap: 12px; flex-wrap: wrap; }
+.btn { display: inline-block; padding: 11px 18px; border-radius: 10px; text-decoration: none; font-weight: 600; font-size: 15px; }
+.btn.primary { background: var(--accent); color: var(--bg); }
+.btn.secondary { border: 1px solid var(--border); color: var(--text); background: var(--surface); }
+.terminal { margin-top: 44px; background: var(--term-bg); color: var(--term-text); border-radius: 14px; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,.18); direction: ltr; text-align: left; }
+.terminal .bar { display: flex; gap: 7px; padding: 12px 14px; background: rgba(255,255,255,.05); }
+.terminal .bar span { width: 11px; height: 11px; border-radius: 50%; background: #4b5563; }
+.terminal pre { margin: 0; padding: 18px 20px 22px; overflow-x: auto; font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.t-ok { color: #4ade80; } .t-bad { color: #f87171; } .t-warn { color: #facc15; } .t-dim { color: #9ca3af; } .t-b { font-weight: 700; color: #fff; }
+section { padding: 56px 0; border-top: 1px solid var(--border); }
+section h2 { font-size: 28px; margin: 0 0 8px; letter-spacing: -0.01em; }
+section p.sub { color: var(--muted); margin: 0 0 28px; max-width: 720px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 16px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 18px; }
+.card h3 { margin: 0 0 6px; font-size: 16px; }
+.card p { margin: 0; color: var(--muted); font-size: 15px; }
+.layers { counter-reset: layer; list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+.layers li { counter-increment: layer; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px 14px 58px; position: relative; }
+.layers li::before { content: counter(layer); position: absolute; left: 16px; top: 14px; width: 28px; height: 28px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-weight: 700; font-size: 14px; }
+.layers b { display: block; }
+.layers span { color: var(--muted); font-size: 15px; }
+.table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; padding: 11px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
+tr:last-child td { border-bottom: none; }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+td code, p code, li code { background: var(--code-bg); padding: 1px 6px; border-radius: 5px; font-size: 13.5px; }
+td:first-child code { white-space: nowrap; font-weight: 600; }
+.codeblock { background: var(--term-bg); color: var(--term-text); border-radius: 12px; padding: 16px 18px; overflow-x: auto; font: 13.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; margin: 0 0 16px; direction: ltr; text-align: left; }
+.codeblock .c { color: #9ca3af; }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.two h3 { margin: 0 0 10px; font-size: 17px; }
+footer { border-top: 1px solid var(--border); padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
+footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+[lang="fa"] body, body.fa { font-family: "Vazirmatn", Tahoma, system-ui, sans-serif; }
+body.fa [data-en], body:not(.fa) [data-fa] { display: none !important; }
+body.fa { direction: rtl; }
+body.fa .layers li { padding: 14px 58px 14px 16px; }
+body.fa .layers li::before { left: auto; right: 16px; }
+body.fa th, body.fa td { text-align: right; }
+@media (max-width: 720px) { nav a.hide-sm { display: none; } .hero { padding-top: 48px; } }
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="#"><span class="logo">?</span>Chera <span class="t-dim" style="font-weight:400;color:var(--muted)">· چرا</span></a>
+    <nav>
+      <a class="hide-sm" href="#layers"><span data-en>How it works</span><span data-fa>نحوه کار</span></a>
+      <a class="hide-sm" href="#verdicts"><span data-en>Verdicts</span><span data-fa>نتیجه‌ها</span></a>
+      <a class="hide-sm" href="#install"><span data-en>Install</span><span data-fa>نصب</span></a>
+      <a href="https://github.com/assaabriiii/chera">GitHub</a>
+      <button class="lang-toggle" id="lang" type="button" aria-label="Switch language"><span data-en>فارسی</span><span data-fa>English</span></button>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <h1 data-en>Don't just see <em>failed</em>.<br>Know <span class="fa-word">why</span>.</h1>
+    <h1 data-fa>فقط «ناموفق» نبینید.<br>بدانید <span class="fa-word">چرا</span>.</h1>
+    <p class="lead" data-en>Chera is a network diagnosis CLI for developers on filtered networks. It tells DNS poisoning, IP blocking, SNI filtering, block pages, provider geo-blocks, throttling and real outages apart, with evidence, a confidence level and a practical next step.</p>
+    <p class="lead" data-fa>چرا یک ابزار خط فرمان برای عیب‌یابی شبکه است، مخصوص برنامه‌نویس‌هایی که پشت شبکه‌های فیلترشده کار می‌کنند. مسموم‌سازی DNS، مسدودسازی IP، فیلترینگ SNI، صفحه مسدودسازی، تحریم از سوی سرویس‌دهنده، محدودسازی سرعت و قطعی واقعی را از هم تفکیک می‌کند و شواهد، سطح اطمینان و قدم بعدی را نشان می‌دهد.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/assaabriiii/chera/releases/latest"><span data-en>Download</span><span data-fa>دانلود</span></a>
+      <a class="btn secondary" href="https://github.com/assaabriiii/chera"><span data-en>View on GitHub</span><span data-fa>مشاهده در GitHub</span></a>
+    </div>
+
+    <div class="terminal" aria-label="Example output">
+      <div class="bar"><span></span><span></span><span></span></div>
+<pre><span class="t-dim">$</span> chera
+
+<span class="t-b">TARGET                            VERDICT             CONF  EXPLANATION</span>
+github.com                        <span class="t-ok">OK                </span>  high  Reachable; the real service answered HTTP 200
+raw.githubusercontent.com         <span class="t-bad">SNI_FILTERED      </span>  high  TLS is reset right after the ClientHello for this name, but works with another SNI (also: DNS_POISONED)
+pypi.org                          <span class="t-bad">DNS_POISONED      </span>  high  DNS answered 10.10.34.35, a known block-page address
+registry.npmjs.org                <span class="t-ok">OK                </span>  high  Reachable; the real service answered HTTP 200
+registry-1.docker.io              <span class="t-bad">PROVIDER_GEO_BLOCK</span>  high  The real service answered HTTP 403 with an unsupported-region message
+proxy.golang.org                  <span class="t-bad">IP_BLOCKED        </span>  high  TCP connections to 142.250.185.81 time out (packets are dropped)
+
+<span class="t-b">Summary:</span> 1 of 6 services blocked by SNI filtering; 1 of 6 blocked by the provider for your region; DNS is poisoned for 1; 1 of 6 blocked by IP; 2 of 6 services reachable
+
+<span class="t-b">What to do:</span>
+  - SNI_FILTERED (raw.githubusercontent.com): The network filters TLS connections by the server name (SNI); DNS changes will not help.
+  - DNS_POISONED (pypi.org): DNS is poisoned: use a DNS-over-HTTPS or DNS-over-TLS resolver, then re-run chera.
+  - PROVIDER_GEO_BLOCK (registry-1.docker.io): The provider blocks your region: this is not a local network problem.
+<span class="t-dim">  ...</span></pre>
+    </div>
+    <p style="color:var(--muted);font-size:14px;margin-top:10px" data-en>Illustrative output. What you see depends on your network.</p>
+    <p style="color:var(--muted);font-size:14px;margin-top:10px" data-fa>خروجی نمایشی است و نتیجه واقعی به شبکه شما بستگی دارد.</p>
+  </div>
+
+  <section>
+    <div class="wrap">
+      <h2 data-en>Every cause needs a different fix</h2>
+      <h2 data-fa>هر علت، راه‌حل متفاوتی دارد</h2>
+      <p class="sub" data-en><code>ping</code> and <code>curl</code> only say "failed". Changing DNS does nothing against SNI filtering, and no network setting fixes a provider that refuses your country. Chera finds out which one you are dealing with.</p>
+      <p class="sub" data-fa><code>ping</code> و <code>curl</code> فقط می‌گویند «ناموفق». تغییر DNS در برابر فیلترینگ SNI بی‌اثر است و هیچ تنظیم شبکه‌ای مشکل سرویس‌دهنده‌ای را که کشور شما را رد می‌کند حل نمی‌کند. چرا مشخص می‌کند با کدام روبه‌رو هستید.</p>
+      <div class="grid">
+        <div class="card"><h3 data-en>One verdict per service</h3><h3 data-fa>یک نتیجه برای هر سرویس</h3><p data-en>With a confidence level and the evidence behind it.</p><p data-fa>همراه با سطح اطمینان و شواهد پشتیبان.</p></div>
+        <div class="card"><h3 data-en>Filtering vs. sanctions</h3><h3 data-fa>فیلترینگ یا تحریم</h3><p data-en>Provider geo-blocks are reported separately, because the fix is different.</p><p data-fa>مسدودسازی از سوی خود سرویس‌دهنده جدا گزارش می‌شود، چون راه‌حلش فرق دارد.</p></div>
+        <div class="card"><h3 data-en>Single static binary</h3><h3 data-fa>یک فایل اجرایی مستقل</h3><p data-en>Linux, macOS and Windows, amd64 and arm64. No runtime, no package registry needed.</p><p data-fa>لینوکس، macOS و ویندوز، amd64 و arm64. بدون نیاز به runtime یا مخزن بسته.</p></div>
+        <div class="card"><h3 data-en>Private and gentle</h3><h3 data-fa>حافظ حریم خصوصی و ملایم</h3><p data-en>A handful of connections per service, no retries, no scanning, no telemetry.</p><p data-fa>چند اتصال برای هر سرویس، بدون تلاش مجدد، بدون اسکن، بدون ارسال داده.</p></div>
+        <div class="card"><h3 data-en>Issue-ready reports</h3><h3 data-fa>گزارش آماده برای issue</h3><p data-en><code>--markdown</code> and <code>--json</code>, without your local IP addresses.</p><p data-fa><code>--markdown</code> و <code>--json</code>، بدون آدرس IP محلی شما.</p></div>
+        <div class="card"><h3 data-en>English and Persian</h3><h3 data-fa>فارسی و انگلیسی</h3><p data-en>Detected from your locale, or <code>--lang fa</code>.</p><p data-fa>تشخیص خودکار از تنظیمات زبان، یا <code>--lang fa</code>.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="layers">
+    <div class="wrap">
+      <h2 data-en>How it works</h2>
+      <h2 data-fa>نحوه کار</h2>
+      <p class="sub" data-en>Each layer runs separately and records exactly how it fails. A rule engine then picks the single most likely cause. <a href="https://github.com/assaabriiii/chera/blob/main/docs/how-it-works.md">Read the full guide</a>.</p>
+      <p class="sub" data-fa>هر لایه جداگانه اجرا می‌شود و دقیقاً ثبت می‌کند چطور شکست می‌خورد. سپس موتور قواعد محتمل‌ترین علت را انتخاب می‌کند. <a href="https://github.com/assaabriiii/chera/blob/main/docs/how-it-works.md">راهنمای کامل (انگلیسی)</a></p>
+      <ol class="layers">
+        <li><b data-en>Local network</b><b data-fa>شبکه محلی</b><span data-en>Interfaces, default route, well-known hosts; proxy variables, OS proxy and VPN interfaces are noted so results are not misread.</span><span data-fa>رابط‌ها، مسیر پیش‌فرض، میزبان‌های شناخته‌شده؛ پراکسی و VPN هم ثبت می‌شوند تا نتایج اشتباه خوانده نشوند.</span></li>
+        <li><b>DNS</b><span data-en>System resolver vs. plain UDP vs. DNS-over-HTTPS. Block-page IPs such as 10.10.34.34–36, private answers and mismatches are flagged; a query to a non-DNS address reveals interception.</span><span data-fa>DNS سیستم در برابر UDP ساده و DNS-over-HTTPS. آدرس‌های صفحه مسدودسازی مثل 10.10.34.34 تا 36، پاسخ‌های خصوصی و ناهمخوانی‌ها علامت می‌خورند؛ پرس‌وجو به آدرسی بدون DNS، رهگیری را آشکار می‌کند.</span></li>
+        <li><b>TCP</b><span data-en>Connects to the correct (DoH) addresses and tells a silent timeout from an active reset.</span><span data-fa>اتصال به آدرس‌های درست (از DoH) و تفکیک «پایان مهلت» از «ریست».</span></li>
+        <li><b>TLS / SNI</b><span data-en>Handshakes with the real name; if that dies, retries the same IP with a neutral SNI and with none. Certificates are validated to spot interception.</span><span data-fa>دست‌دهی با نام واقعی؛ اگر قطع شود، همان IP با SNI خنثی و بدون SNI امتحان می‌شود. گواهی برای تشخیص رهگیری بررسی می‌شود.</span></li>
+        <li><b>HTTP</b><span data-en>Classifies the answer from the verified address: block page, provider geo-block, server error, or normal.</span><span data-fa>دسته‌بندی پاسخ از آدرس تأییدشده: صفحه مسدودسازی، تحریم سرویس‌دهنده، خطای سرور یا عادی.</span></li>
+        <li><b data-en>Throttling (optional)</b><b data-fa>محدودسازی سرعت (اختیاری)</b><span data-en>With <code>--speed</code>, compares handshake time and throughput with a baseline host.</span><span data-fa>با <code>--speed</code>، زمان دست‌دهی و سرعت با میزبان مبنا مقایسه می‌شود.</span></li>
+        <li><b data-en>Outage check</b><b data-fa>بررسی قطعی</b><span data-en>When the path is clean but the service fails, asks its official status page.</span><span data-fa>وقتی مسیر سالم است اما سرویس خطا می‌دهد، صفحه وضعیت رسمی آن بررسی می‌شود.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="verdicts">
+    <div class="wrap">
+      <h2 data-en>Verdicts</h2>
+      <h2 data-fa>نتیجه‌ها</h2>
+      <p class="sub" data-en>Every target gets exactly one primary verdict with a confidence of high, medium or low. Secondary findings are listed as <code>also</code>.</p>
+      <p class="sub" data-fa>هر مقصد دقیقاً یک نتیجه اصلی با اطمینان زیاد، متوسط یا کم می‌گیرد. یافته‌های فرعی با «همچنین» نمایش داده می‌شوند.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th data-en>Verdict</th><th data-fa>نتیجه</th><th data-en>Meaning</th><th data-fa>معنی</th></tr></thead>
+          <tbody>
+            <tr><td><code>OK</code></td><td><span data-en>The real service answered over a verified path.</span><span data-fa>سرویس اصلی از مسیر تأییدشده پاسخ داد.</span></td></tr>
+            <tr><td><code>LOCAL_NETWORK_DOWN</code></td><td><span data-en>No interface, no route, or nothing reachable at all.</span><span data-fa>رابط یا مسیری نیست یا هیچ چیز در دسترس نیست.</span></td></tr>
+            <tr><td><code>DNS_POISONED</code></td><td><span data-en>Your resolver lies while DNS-over-HTTPS answers correctly.</span><span data-fa>DNS شما پاسخ نادرست می‌دهد در حالی که DoH درست پاسخ می‌دهد.</span></td></tr>
+            <tr><td><code>DNS_INTERCEPTED</code></td><td><span data-en>DNS is hijacked on the path; changing the resolver IP won't help.</span><span data-fa>DNS در مسیر ربوده می‌شود؛ تغییر آدرس سرور DNS کمکی نمی‌کند.</span></td></tr>
+            <tr><td><code>IP_BLOCKED</code></td><td><span data-en>Packets to the correct addresses are silently dropped.</span><span data-fa>بسته‌ها به آدرس‌های درست بی‌صدا دور ریخته می‌شوند.</span></td></tr>
+            <tr><td><code>CONNECTION_RESET</code></td><td><span data-en>Connections are actively refused or reset.</span><span data-fa>اتصال‌ها فعالانه رد یا ریست می‌شوند.</span></td></tr>
+            <tr><td><code>SNI_FILTERED</code></td><td><span data-en>TLS dies after the ClientHello for this name only.</span><span data-fa>TLS فقط برای این نام پس از ClientHello قطع می‌شود.</span></td></tr>
+            <tr><td><code>TLS_INTERCEPTED</code></td><td><span data-en>Untrusted certificate or a TLS inspection product.</span><span data-fa>گواهی نامعتبر یا محصول بازرسی TLS.</span></td></tr>
+            <tr><td><code>BLOCK_PAGE</code></td><td><span data-en>A government or ISP block page was served.</span><span data-fa>صفحه مسدودسازی دولتی یا ISP نمایش داده شد.</span></td></tr>
+            <tr><td><code>PROVIDER_GEO_BLOCK</code></td><td><span data-en>The real service refuses your region. Not a network problem.</span><span data-fa>خود سرویس اصلی منطقه شما را رد می‌کند؛ مشکل شبکه نیست.</span></td></tr>
+            <tr><td><code>THROTTLED</code></td><td><span data-en>Works, but severely slower than a baseline host.</span><span data-fa>کار می‌کند اما به‌شدت کندتر از میزبان مبناست.</span></td></tr>
+            <tr><td><code>UPSTREAM_OUTAGE</code></td><td><span data-en>Clean path, but the service errors or reports an incident.</span><span data-fa>مسیر سالم است اما سرویس خطا می‌دهد یا حادثه گزارش کرده است.</span></td></tr>
+            <tr><td><code>INCONCLUSIVE</code></td><td><span data-en>No clear cause; see <code>--verbose</code>.</span><span data-fa>علت روشنی پیدا نشد؛ <code>--verbose</code> را ببینید.</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2 data-en>Install</h2>
+      <h2 data-fa>نصب</h2>
+      <p class="sub" data-en>Download a binary from the <a href="https://github.com/assaabriiii/chera/releases/latest">latest release</a> and verify it against <code>checksums.txt</code>, or install with Go.</p>
+      <p class="sub" data-fa>فایل اجرایی را از <a href="https://github.com/assaabriiii/chera/releases/latest">آخرین release</a> دانلود و با <code>checksums.txt</code> بررسی کنید، یا با Go نصب کنید.</p>
+      <div class="two">
+        <div>
+          <h3 data-en>With Go</h3><h3 data-fa>با Go</h3>
+<pre class="codeblock">go install github.com/assaabriiii/chera/cmd/chera@latest</pre>
+          <h3 data-en>Usage</h3><h3 data-fa>استفاده</h3>
+<pre class="codeblock">chera                     <span class="c"># default developer preset</span>
+chera github.com          <span class="c"># one host</span>
+chera --preset ai         <span class="c"># AI APIs</span>
+chera --verbose pypi.org  <span class="c"># raw evidence</span>
+chera --markdown          <span class="c"># report for an issue</span>
+chera --lang fa           <span class="c"># Persian output</span></pre>
+        </div>
+        <div>
+          <h3 data-en>From a release</h3><h3 data-fa>از release</h3>
+<pre class="codeblock">curl -LO https://github.com/assaabriiii/chera/releases/download/vX.Y.Z/chera_X.Y.Z_linux_amd64.tar.gz
+curl -LO https://github.com/assaabriiii/chera/releases/download/vX.Y.Z/checksums.txt
+sha256sum --ignore-missing -c checksums.txt
+tar xzf chera_X.Y.Z_linux_amd64.tar.gz
+sudo mv chera /usr/local/bin/</pre>
+          <p style="color:var(--muted);font-size:15px" data-en>Presets: <code>github</code>, <code>python</code>, <code>node</code>, <code>docker</code>, <code>huggingface</code>, <code>ai</code>, <code>go</code>, <code>rust</code>, <code>dev</code>, <code>all</code>. Extend them with your own YAML.</p>
+          <p style="color:var(--muted);font-size:15px" data-fa>پیش‌تنظیم‌ها: <code>github</code>، <code>python</code>، <code>node</code>، <code>docker</code>، <code>huggingface</code>، <code>ai</code>، <code>go</code>، <code>rust</code>، <code>dev</code>، <code>all</code>. با فایل YAML خودتان گسترششان دهید.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <h2 data-en>Contribute</h2>
+      <h2 data-fa>مشارکت</h2>
+      <p class="sub" data-en>Reports from real filtered networks make Chera better. Add presets, block-page and geo-block signatures, translations, or fix a misdiagnosis. See <a href="https://github.com/assaabriiii/chera/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>.</p>
+      <p class="sub" data-fa>گزارش‌های واقعی از شبکه‌های فیلترشده چرا را بهتر می‌کند. پیش‌تنظیم، امضای صفحه مسدودسازی یا تحریم، ترجمه اضافه کنید یا تشخیص اشتباهی را اصلاح کنید. راهنما: <a href="https://github.com/assaabriiii/chera/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a></p>
+      <div class="cta">
+        <a class="btn primary" href="https://github.com/assaabriiii/chera/issues/new/choose"><span data-en>Report a network</span><span data-fa>گزارش یک شبکه</span></a>
+        <a class="btn secondary" href="https://github.com/assaabriiii/chera/blob/main/CONTRIBUTING.md"><span data-en>Contribution guide</span><span data-fa>راهنمای مشارکت</span></a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span data-en>Chera is open source under the MIT license. No telemetry, ever.</span>
+    <span data-fa>چرا متن‌باز و تحت مجوز MIT است. هرگز داده‌ای ارسال نمی‌کند.</span>
+    <span><a href="https://github.com/assaabriiii/chera">GitHub</a> · <a href="https://github.com/assaabriiii/chera/blob/main/LICENSE">MIT</a></span>
+  </div>
+</footer>
+
+<script>
+(function () {
+  var body = document.body, html = document.documentElement;
+  function apply(lang) {
+    body.classList.toggle('fa', lang === 'fa');
+    html.lang = lang;
+    try { localStorage.setItem('chera-lang', lang); } catch (e) {}
+  }
+  var saved = null;
+  try { saved = localStorage.getItem('chera-lang'); } catch (e) {}
+  var initial = saved || (/^fa\b/i.test(navigator.language || '') ? 'fa' : 'en');
+  if (location.hash === '#fa') initial = 'fa';
+  apply(initial);
+  document.getElementById('lang').addEventListener('click', function () {
+    apply(body.classList.contains('fa') ? 'en' : 'fa');
+  });
+})();
+</script>
+</body>
+</html>

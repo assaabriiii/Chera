@@ -3,7 +3,7 @@
 **Chera** (Persian: چرا, "why?") is a network diagnosis CLI that explains *why* a
 service is unreachable, not just *that* it is.
 
-[فارسی](README.fa.md) · [How it works](docs/how-it-works.md) · [Contributing](CONTRIBUTING.md)
+[Website](https://assaabriiii.github.io/Chera/) · [فارسی](README.fa.md) · [How it works](docs/how-it-works.md) · [Contributing](CONTRIBUTING.md)
 
 [![CI](https://github.com/assaabriiii/chera/actions/workflows/ci.yml/badge.svg)](https://github.com/assaabriiii/chera/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

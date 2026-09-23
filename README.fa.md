@@ -4,7 +4,7 @@
 
 **چرا** یک ابزار خط فرمان برای عیب‌یابی شبکه است که توضیح می‌دهد *چرا* یک سرویس در دسترس نیست، نه فقط *اینکه* در دسترس نیست.
 
-[English](README.md) · [نحوه کار (انگلیسی)](docs/how-it-works.md) · [مشارکت (انگلیسی)](CONTRIBUTING.md)
+[وب‌سایت](https://assaabriiii.github.io/Chera/#fa) · [English](README.md) · [نحوه کار (انگلیسی)](docs/how-it-works.md) · [مشارکت (انگلیسی)](CONTRIBUTING.md)
 
 ---
 
