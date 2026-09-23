@@ -140,7 +140,7 @@ func Analyze(r Result, sigs *signatures.Set) Analysis {
 	}
 	refPublic := len(a.Reference) > 0 && !allBogon(a.Reference)
 
-	for _, ans := range plain {
+	for i, ans := range plain {
 		if !ans.OK() {
 			continue
 		}
@@ -155,7 +155,9 @@ func Analyze(r Result, sigs *signatures.Set) Analysis {
 				bad = true
 			}
 		}
-		if bad && ans.Kind == KindUDP && a.ReferenceKind == KindDoH {
+		// plain[0] is the resolver under test; the rest are public
+		// resolvers whose answers should never be rewritten.
+		if bad && i > 0 && a.ReferenceKind == KindDoH {
 			a.InjectedPublic = true
 		}
 	}

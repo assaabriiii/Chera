@@ -66,7 +66,7 @@ func TestCheck(t *testing.T) {
 			if (res.Neutral != nil) != tt.wantExtra {
 				t.Fatalf("extra handshakes ran = %v, want %v", res.Neutral != nil, tt.wantExtra)
 			}
-			if tt.useEvil && res.Real.Issuer == "" {
+			if tt.useEvil && res.Real.IssuerName != "Fortinet" {
 				t.Fatal("issuer not recorded")
 			}
 		})

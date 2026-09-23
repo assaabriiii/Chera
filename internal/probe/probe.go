@@ -18,6 +18,7 @@ import (
 	"github.com/assaabriiii/chera/internal/signatures"
 	"github.com/assaabriiii/chera/internal/tcpcheck"
 	"github.com/assaabriiii/chera/internal/tlscheck"
+	"github.com/assaabriiii/chera/internal/verdict"
 )
 
 // Config holds everything the layers need. Tests fill it with fakes; the
@@ -250,11 +251,22 @@ func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) mo
 	}
 	wg.Wait()
 
+	d := verdict.Decide(verdict.Input{
+		Local:      sh.local,
+		Intercept:  sh.intercept,
+		DNS:        st.analysis,
+		TCP:        st.tcp,
+		TLS:        st.tls,
+		Verify:     st.verify,
+		HTTP:       st.http,
+		Signatures: r.cfg.Signatures,
+	})
 	return model.TargetReport{
 		Target:     t,
-		Verdict:    model.Inconclusive,
-		Confidence: model.Low,
-		Reason:     model.Reason{Key: "inconclusive"},
+		Verdict:    d.Verdict,
+		Confidence: d.Confidence,
+		Reason:     d.Reason,
+		Also:       d.Also,
 		Evidence:   evidence(st),
 	}
 }

@@ -79,6 +79,14 @@ func TestAnalyze(t *testing.T) {
 			poisoned: true, blockIPs: 1, injected: true, refKind: KindDoH,
 		},
 		{
+			name: "custom udp resolver under test is not injection",
+			res: Result{
+				System: Answer{Resolver: "resolver:10.0.0.1:53", Kind: KindUDP, Addrs: testutil.Addrs("10.10.34.36")},
+				DoH:    []Answer{ans(KindDoH, "104.16.0.35")},
+			},
+			poisoned: true, blockIPs: 1, refKind: KindDoH,
+		},
+		{
 			name:          "system nxdomain",
 			res:           Result{System: failed(KindSystem, ErrNXDomain), DoH: []Answer{ans(KindDoH, "1.2.3.4")}},
 			systemFailure: "nxdomain", refKind: KindDoH,

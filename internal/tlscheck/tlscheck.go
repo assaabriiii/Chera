@@ -44,12 +44,14 @@ const DefaultNeutralSNI = "example.com"
 
 // Handshake is one TLS handshake attempt.
 type Handshake struct {
-	SNI         string
-	Outcome     Outcome
-	Err         error
-	Duration    time.Duration
-	Version     string
-	Issuer      string
+	SNI      string
+	Outcome  Outcome
+	Err      error
+	Duration time.Duration
+	Version  string
+	Issuer   string
+	// IssuerName is the issuer's organisation, or its common name.
+	IssuerName  string
 	Subject     string
 	CertProblem string
 }
@@ -111,6 +113,10 @@ func Do(ctx context.Context, o Options, addr, sni, verifyHost string) Handshake 
 	if len(state.PeerCertificates) > 0 {
 		leaf := state.PeerCertificates[0]
 		h.Issuer = leaf.Issuer.String()
+		h.IssuerName = leaf.Issuer.CommonName
+		if len(leaf.Issuer.Organization) > 0 {
+			h.IssuerName = leaf.Issuer.Organization[0]
+		}
 		h.Subject = leaf.Subject.String()
 		if verifyHost != "" {
 			if err := Verify(state.PeerCertificates, verifyHost, o.RootCAs); err != nil {
