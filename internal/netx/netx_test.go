@@ -192,6 +192,36 @@ func TestSOCKS5Proxy(t *testing.T) {
 	}
 }
 
+// TestHTTPConnectEarlyData covers a proxy whose tunnel delivers data in the
+// same read as the CONNECT response.
+func TestHTTPConnectEarlyData(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c.Close()
+		http.ReadRequest(bufio.NewReader(c))
+		c.Write([]byte("HTTP/1.1 200 OK\r\n\r\nhello"))
+		time.Sleep(100 * time.Millisecond)
+	}()
+	u, _ := url.Parse("http://" + ln.Addr().String())
+	conn, err := Proxied(u, time.Second).DialContext(context.Background(), "tcp", "example.test:443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	buf := make([]byte, 5)
+	if _, err := io.ReadFull(conn, buf); err != nil || string(buf) != "hello" {
+		t.Fatalf("read %q, %v", buf, err)
+	}
+}
+
 func TestProxyRejectsUDP(t *testing.T) {
 	u, _ := url.Parse("socks5://127.0.0.1:1")
 	if _, err := Proxied(u, time.Second).DialContext(context.Background(), "udp", "1.1.1.1:53"); err == nil {

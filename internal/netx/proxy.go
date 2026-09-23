@@ -55,7 +55,12 @@ func (p *proxyDialer) DialContext(ctx context.Context, network, address string) 
 		_ = conn.SetDeadline(dl)
 	}
 	if p.u.Scheme == "http" {
-		err = httpConnect(conn, p.u, address)
+		var br *bufio.Reader
+		br, err = httpConnect(conn, p.u, address)
+		if err == nil && br.Buffered() > 0 {
+			// The tunnel may already carry data from the far end.
+			conn = &bufferedConn{Conn: conn, r: br}
+		}
 	} else {
 		err = socks5Connect(conn, p.u, address)
 	}
@@ -67,7 +72,16 @@ func (p *proxyDialer) DialContext(ctx context.Context, network, address string) 
 	return conn, nil
 }
 
-func httpConnect(conn net.Conn, u *url.URL, address string) error {
+// bufferedConn returns bytes already read into a bufio.Reader before
+// reading from the connection again.
+type bufferedConn struct {
+	net.Conn
+	r *bufio.Reader
+}
+
+func (c *bufferedConn) Read(p []byte) (int, error) { return c.r.Read(p) }
+
+func httpConnect(conn net.Conn, u *url.URL, address string) (*bufio.Reader, error) {
 	req := &http.Request{
 		Method: http.MethodConnect,
 		URL:    &url.URL{Opaque: address},
@@ -80,21 +94,18 @@ func httpConnect(conn net.Conn, u *url.URL, address string) error {
 		req.Header.Set("Proxy-Authorization", "Basic "+cred)
 	}
 	if err := req.Write(conn); err != nil {
-		return fmt.Errorf("proxy CONNECT: %w", err)
+		return nil, fmt.Errorf("proxy CONNECT: %w", err)
 	}
 	br := bufio.NewReader(conn)
 	resp, err := http.ReadResponse(br, req)
 	if err != nil {
-		return fmt.Errorf("proxy CONNECT: %w", err)
+		return nil, fmt.Errorf("proxy CONNECT: %w", err)
 	}
-	resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("proxy CONNECT to %s: %s", address, resp.Status)
+		resp.Body.Close()
+		return nil, fmt.Errorf("proxy CONNECT to %s: %s", address, resp.Status)
 	}
-	if br.Buffered() > 0 {
-		return errors.New("proxy CONNECT: unexpected data after response")
-	}
-	return nil
+	return br, nil
 }
 
 func socks5Connect(conn net.Conn, u *url.URL, address string) error {

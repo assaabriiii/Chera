@@ -45,7 +45,8 @@ jobs:
         run: go mod tidy -diff
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.5
+          # Must be built with a Go at least as new as the one above.
+          version: latest
 
   release-check:
     runs-on: ubuntu-latest
