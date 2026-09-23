@@ -176,7 +176,7 @@ func Summary(r *model.Report, c *i18n.Catalog) string {
 		parts = append(parts, c.T("summary."+string(v), map[string]string{"n": fmt.Sprint(counts[v]), "total": total}))
 	}
 	parts = append(parts, c.T("summary.OK", map[string]string{"n": fmt.Sprint(counts[model.OK]), "total": total}))
-	return strings.Join(parts, "; ")
+	return strings.Join(parts, c.T("summary.sep", nil))
 }
 
 // Suggestions returns one line per distinct (verdict, remedy) pair among

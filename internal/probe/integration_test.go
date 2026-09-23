@@ -212,6 +212,9 @@ func TestIntegrationVerdicts(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.sc.closedPort {
+				testutil.SkipIfSlowRefusal(t)
+			}
 			t.Parallel()
 			h := setup(t, tt.sc)
 			got := h.run(t, tt.sc.host)

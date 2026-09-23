@@ -1,0 +1,39 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - misspell
+    - unconvert
+  settings:
+    errcheck:
+      exclude-functions:
+        # Report output goes to a terminal or pipe; there is nothing useful
+        # to do when writing it fails.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (io.Closer).Close
+        - (net.Conn).Close
+        - (net.Listener).Close
+        - (net.PacketConn).Close
+        - (*net.TCPConn).Close
+        - (*crypto/tls.Conn).Close
+        - (net.Conn).SetDeadline
+        - (net.Conn).SetReadDeadline
+        - (*net.TCPConn).SetLinger
+  exclusions:
+    rules:
+      # Test servers and fixtures ignore write/close errors on purpose.
+      - path: _test\.go
+        linters: [errcheck]
+      - path: internal/testutil/
+        linters: [errcheck]
+      # Persian text legitimately contains zero-width non-joiners.
+      - path: internal/i18n/messages\.go
+        text: ST1018
+        linters: [staticcheck]
+
+formatters:
+  enable:
+    - gofmt

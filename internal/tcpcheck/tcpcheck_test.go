@@ -11,6 +11,7 @@ import (
 )
 
 func TestProbe(t *testing.T) {
+	testutil.SkipIfSlowRefusal(t)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -70,6 +71,7 @@ func TestSummarize(t *testing.T) {
 }
 
 func TestProbeAllOrder(t *testing.T) {
+	testutil.SkipIfSlowRefusal(t)
 	closed := netip.MustParseAddrPort(testutil.ClosedAddr(t, "tcp"))
 	bh := netip.MustParseAddrPort("192.0.2.9:443")
 	d := &testutil.FakeDialer{Blackhole: map[string]bool{bh.String(): true}}

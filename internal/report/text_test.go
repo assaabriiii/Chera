@@ -100,8 +100,9 @@ func TestTextPersian(t *testing.T) {
 }
 
 func TestWidth(t *testing.T) {
-	if width("می‌شود") != 5 {
-		t.Fatalf("width with ZWNJ = %d", width("می‌شود"))
+	const withZWNJ = "\u0645\u06cc\u200c\u0634\u0648\u062f" // "می‌شود"
+	if width(withZWNJ) != 5 {
+		t.Fatalf("width with ZWNJ = %d", width(withZWNJ))
 	}
 	if pad("ab", 4) != "ab  " {
 		t.Fatal("pad")

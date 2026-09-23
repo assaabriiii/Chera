@@ -39,6 +39,7 @@ var english = map[string]string{
 	"summary.UPSTREAM_OUTAGE":    "{n} of {total} have an upstream outage",
 	"summary.INCONCLUSIVE":       "{n} inconclusive",
 	"summary.none":               "No targets were checked.",
+	"summary.sep":                "; ",
 
 	// Verdict reasons.
 	"reason.ok.http":            "Reachable; the real service answered HTTP {status}",
@@ -143,6 +144,7 @@ var persian = map[string]string{
 	"summary.UPSTREAM_OUTAGE":    "{n} از {total} دچار قطعی سمت سرویس‌دهنده است",
 	"summary.INCONCLUSIVE":       "{n} مورد بی‌نتیجه",
 	"summary.none":               "هیچ مقصدی بررسی نشد.",
+	"summary.sep":                "؛ ",
 
 	"reason.ok.http":            "در دسترس است؛ سرویس اصلی با HTTP {status} پاسخ داد",
 	"reason.ok.tls":             "دست‌دهی TLS با سرویس اصلی موفق بود",

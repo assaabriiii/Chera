@@ -86,7 +86,9 @@ func Measure(ctx context.Context, client *http.Client, url string, timeout time.
 	n, err := io.Copy(io.Discard, io.LimitReader(resp.Body, MaxBytes))
 	m.Duration = time.Since(start)
 	m.Bytes = n
-	if err != nil && !(errors.Is(err, context.DeadlineExceeded) && n > 0) {
+	// A timeout after some bytes arrived is a valid (slow) measurement.
+	partial := errors.Is(err, context.DeadlineExceeded) && n > 0
+	if err != nil && !partial {
 		m.Err = err
 	}
 	return m

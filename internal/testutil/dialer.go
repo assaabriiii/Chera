@@ -3,7 +3,9 @@ package testutil
 import (
 	"context"
 	"net"
+	"runtime"
 	"sync"
+	"testing"
 )
 
 // FakeDialer dials for real, except that addresses in Blackhole never
@@ -44,4 +46,14 @@ func (f *FakeDialer) Count(addr string) int {
 		}
 	}
 	return n
+}
+
+// SkipIfSlowRefusal skips tests that expect a connection to a closed port
+// to be refused immediately. Windows retries the SYN for about two seconds
+// before reporting the refusal, which looks like a timeout to short tests.
+func SkipIfSlowRefusal(t testing.TB) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("closed ports are not refused immediately on Windows")
+	}
 }
