@@ -1,8 +1,15 @@
 name: Release
 
+# Runs when a v* tag is pushed, or manually from the Actions tab with a
+# version: the workflow then creates the tag on the chosen commit itself.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to release, e.g. v0.2.0"
+        required: true
 
 permissions:
   contents: write
@@ -19,6 +26,23 @@ jobs:
           go-version: stable
       - name: Test
         run: go test -count=1 ./...
+      - name: Create tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "version must look like v1.2.3" >&2
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$VERSION" >/dev/null; then
+            echo "tag $VERSION already exists" >&2
+            exit 1
+          fi
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898333+github-actions[bot]@users.noreply.github.com" \
+              tag -a "$VERSION" -m "$VERSION"
+          git push origin "$VERSION"
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"

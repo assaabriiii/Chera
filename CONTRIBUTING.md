@@ -224,7 +224,8 @@ These are not negotiable, and reviews will check them:
 
 ## Releases
 
-Maintainers tag a version (`git tag v0.2.0 && git push origin v0.2.0`). The
-release workflow runs the tests and GoReleaser, which builds Linux, macOS and
+Maintainers either push a tag (`git tag v0.2.0 && git push origin v0.2.0`) or
+run the **Release** workflow from the Actions tab with a version, which creates
+the tag itself. The workflow runs the tests and GoReleaser, which builds Linux, macOS and
 Windows binaries for amd64 and arm64 and publishes them with a
 `checksums.txt`.
