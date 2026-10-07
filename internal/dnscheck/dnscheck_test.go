@@ -237,3 +237,51 @@ func TestInterception(t *testing.T) {
 		t.Fatalf("false positive: %+v", clean)
 	}
 }
+
+func TestAnalyzeReachability(t *testing.T) {
+	sigs := signatures.Builtin()
+	timeout := &net.OpError{Op: "read", Err: context.DeadlineExceeded}
+	reset := errors.New("read tcp: connection reset by peer")
+	tests := []struct {
+		name           string
+		res            Result
+		dohUnavailable bool
+		allTimeout     bool
+	}{
+		{
+			name: "doh answers",
+			res:  Result{System: ans(KindSystem, "1.2.3.4"), Public: []Answer{ans(KindUDP, "1.2.3.4")}, DoH: []Answer{ans(KindDoH, "1.2.3.4")}},
+		},
+		{
+			name: "doh nxdomain still answered",
+			res:  Result{System: failed(KindSystem, ErrNXDomain), Public: []Answer{failed(KindUDP, ErrNXDomain)}, DoH: []Answer{failed(KindDoH, ErrNXDomain), failed(KindDoH, reset)}},
+		},
+		{
+			name:           "doh reset and http error",
+			res:            Result{System: ans(KindSystem, "1.2.3.4"), Public: []Answer{ans(KindUDP, "1.2.3.4")}, DoH: []Answer{failed(KindDoH, reset), failed(KindDoH, errors.New("DoH server answered HTTP 403"))}},
+			dohUnavailable: true,
+		},
+		{
+			name:           "every query dropped",
+			res:            Result{System: failed(KindSystem, timeout), Public: []Answer{failed(KindUDP, timeout), failed(KindUDP, timeout)}, DoH: []Answer{failed(KindDoH, reset)}},
+			dohUnavailable: true, allTimeout: true,
+		},
+		{
+			name:           "one public resolver answers",
+			res:            Result{System: failed(KindSystem, timeout), Public: []Answer{failed(KindUDP, timeout), failed(KindUDP, ErrNoAnswer)}, DoH: []Answer{failed(KindDoH, reset)}},
+			dohUnavailable: true,
+		},
+		{
+			name: "no public resolvers configured",
+			res:  Result{System: failed(KindSystem, timeout)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := Analyze(tt.res, sigs)
+			if a.DoHUnavailable != tt.dohUnavailable || a.AllPlainTimeout != tt.allTimeout {
+				t.Fatalf("DoHUnavailable=%v AllPlainTimeout=%v, want %v %v", a.DoHUnavailable, a.AllPlainTimeout, tt.dohUnavailable, tt.allTimeout)
+			}
+		})
+	}
+}

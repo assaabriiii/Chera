@@ -215,11 +215,14 @@ func Notes(r *model.Report, c *i18n.Catalog) []string {
 	var notes []string
 	l := r.Local
 	if !l.Up {
-		detail := "no default route"
-		if l.DefaultRoute {
-			detail = "no well-known host reachable"
+		reason := l.DownReason
+		if reason == "" {
+			reason = "no_route"
+			if l.DefaultRoute {
+				reason = "unreachable"
+			}
 		}
-		notes = append(notes, c.T("label.local_down", map[string]string{"detail": detail}))
+		notes = append(notes, c.T("label.local_down", map[string]string{"detail": c.T("reason.local."+reason, nil)}))
 	}
 	if l.ProxyFlag {
 		notes = append(notes, c.T("label.proxy_flag", nil))
@@ -235,6 +238,9 @@ func Notes(r *model.Report, c *i18n.Catalog) []string {
 	}
 	if l.DNSIntercept {
 		notes = append(notes, c.T("label.dns_hijack", nil))
+	}
+	if l.DoHUnreachable {
+		notes = append(notes, c.T("label.doh_down", nil))
 	}
 	return notes
 }

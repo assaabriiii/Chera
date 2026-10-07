@@ -28,6 +28,8 @@ const (
 	ExitOK       = 0 // every target is OK
 	ExitProblems = 1 // at least one target is not OK
 	ExitUsage    = 2 // bad flags or configuration
+	// ExitInterrupted follows the shell convention for SIGINT (128+2).
+	ExitInterrupted = 130
 )
 
 // Options are the parsed command-line flags.
@@ -58,6 +60,15 @@ type Env struct {
 	Getenv func(string) string
 	// Run executes the diagnosis; replaced in tests.
 	Run func(ctx context.Context, cfg probe.Config, targets []model.Target) *model.Report
+	// Context is the parent context; default context.Background.
+	Context context.Context
+}
+
+func (e Env) context() context.Context {
+	if e.Context != nil {
+		return e.Context
+	}
+	return context.Background()
 }
 
 func newFlagSet(o *Options, errOut io.Writer) *flag.FlagSet {
@@ -259,7 +270,7 @@ func Main(args []string, env Env) int {
 		return ExitUsage
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(env.context(), os.Interrupt)
 	defer stop()
 
 	run := env.Run
@@ -269,6 +280,12 @@ func Main(args []string, env Env) int {
 		}
 	}
 	rep := run(ctx, cfg, targets)
+	if ctx.Err() != nil {
+		// Checks cut short by Ctrl-C look like timeouts; a report built
+		// from them would blame the network for the interruption.
+		fmt.Fprintln(env.Err, "chera: interrupted")
+		return ExitInterrupted
+	}
 
 	switch {
 	case opts.JSON:

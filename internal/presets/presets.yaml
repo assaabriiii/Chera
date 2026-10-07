@@ -74,13 +74,16 @@ presets:
         kind: docker
 
   huggingface:
-    description: Hugging Face Hub and LFS CDN
+    description: Hugging Face Hub, LFS CDN and Xet storage
     targets:
       - host: huggingface.co
         url: https://huggingface.co/robots.txt
         kind: huggingface
-      - host: cdn-lfs.huggingface.co
-        url: https://cdn-lfs.huggingface.co/
+      - host: cdn-lfs.hf.co
+        url: https://cdn-lfs.hf.co/
+        kind: huggingface
+      - host: cas-bridge.xethub.hf.co
+        url: https://cas-bridge.xethub.hf.co/
         kind: huggingface
 
   ai:

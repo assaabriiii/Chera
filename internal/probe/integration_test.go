@@ -42,6 +42,13 @@ type scenario struct {
 	statusIndicator string
 	// speed enables the throttling layer with a fast local baseline.
 	speed bool
+	// dropDNS makes the system and public plain resolvers silently drop
+	// queries for host while still answering the control name.
+	dropDNS bool
+	// dohDown makes the DoH reference unreachable.
+	dohDown bool
+	// publicDNS is what the public plain resolver returns for host.
+	publicDNS []netip.Addr
 }
 
 type harness struct {
@@ -94,11 +101,24 @@ func setup(t *testing.T, sc scenario) *harness {
 		dohAnswers[sc.host] = sc.dohDNS
 	}
 	dohAddr := testutil.ServeTLS(t, ca.Leaf(t, "doh.test"), testutil.DoHHandler(dohAnswers), testutil.TLSOptions{})
-	sysAnswers := testutil.Answers{}
+	if sc.dohDown {
+		dohAddr = testutil.ClosedAddr(t, "tcp")
+	}
+	var drop []string
+	if sc.dropDNS {
+		drop = []string{sc.host}
+	}
+	control := testutil.Addrs("93.184.215.14")
+	sysAnswers := testutil.Answers{DefaultControlName: control}
 	if sc.systemDNS != nil {
 		sysAnswers[sc.host] = sc.systemDNS
 	}
-	sysDNS := testutil.NewDNSServer(t, sysAnswers)
+	sysDNS := testutil.NewDroppingDNSServer(t, sysAnswers, drop...)
+	pubAnswers := testutil.Answers{DefaultControlName: control}
+	if sc.publicDNS != nil {
+		pubAnswers[sc.host] = sc.publicDNS
+	}
+	pubDNS := testutil.NewDroppingDNSServer(t, pubAnswers, drop...)
 
 	intercept := testutil.ClosedAddr(t, "udp")
 	if sc.hijackDNS {
@@ -144,7 +164,8 @@ func setup(t *testing.T, sc scenario) *harness {
 					return nd.DialContext(ctx, "udp", sysDNS.Addr)
 				},
 			}},
-			DoH: []dnscheck.Resolver{dnscheck.NewDoH("doh:test", "https://doh.test/dns-query", dohAddr, netx.Direct(timeout), ca.Pool, timeout)},
+			Public: []dnscheck.Resolver{&dnscheck.UDP{Label: "udp:test", Addr: pubDNS.Addr}},
+			DoH:    []dnscheck.Resolver{dnscheck.NewDoH("doh:test", "https://doh.test/dns-query", dohAddr, netx.Direct(timeout), ca.Pool, timeout)},
 		},
 		InterceptionProbe: intercept,
 		Local: &localnet.Config{
@@ -209,6 +230,9 @@ func TestIntegrationVerdicts(t *testing.T) {
 		{"speed check on a fast service", scenario{host: "svc.test", systemDNS: lo, dohDNS: lo, speed: true, handler: okHandler(200, string(make([]byte, 128<<10)))},
 			model.OK, model.High, nil},
 		{"inconclusive", scenario{host: "svc.test"}, model.Inconclusive, model.Low, nil},
+		{"dns queries dropped for one name", scenario{host: "svc.test", dropDNS: true, dohDown: true}, model.DNSIntercepted, model.Medium, nil},
+		{"doh down, plain reference shows nxdomain poisoning", scenario{host: "svc.test", systemDNS: nil, publicDNS: lo, dohDown: true}, model.DNSPoisoned, model.Medium, nil},
+		{"doh down, everything fine", scenario{host: "svc.test", systemDNS: lo, publicDNS: lo, dohDown: true}, model.OK, model.High, nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -261,5 +285,50 @@ func TestReportOrderAndLocalSummary(t *testing.T) {
 	}
 	if rep.Targets[1].Verdict != model.Inconclusive {
 		t.Fatalf("missing host verdict = %s", rep.Targets[1].Verdict)
+	}
+}
+
+func TestDoHDownIsReported(t *testing.T) {
+	lo := testutil.Addrs("127.0.0.1")
+	h := setup(t, scenario{host: "svc.test", systemDNS: nil, publicDNS: lo, dohDown: true})
+	rep := New(h.cfg).Run(context.Background(), []model.Target{{Host: "svc.test"}})
+	if !rep.Local.DoHUnreachable {
+		t.Error("DoHUnreachable not set")
+	}
+	if got := rep.Targets[0].Reason.Key; got != "dns.nxdomain_plain" {
+		t.Errorf("reason = %s, want dns.nxdomain_plain (DoH never answered)", got)
+	}
+
+	h = setup(t, scenario{host: "svc.test", systemDNS: lo, dohDNS: lo})
+	if rep := New(h.cfg).Run(context.Background(), []model.Target{{Host: "svc.test"}}); rep.Local.DoHUnreachable {
+		t.Error("DoHUnreachable set although DoH answered")
+	}
+}
+
+// TestSharedChecksDoNotStall checks that the interception probe, which
+// normally gets no reply and waits out its timeout, neither delays the
+// targets by the full per-operation timeout nor runs before them.
+func TestSharedChecksDoNotStall(t *testing.T) {
+	lo := testutil.Addrs("127.0.0.1")
+	h := setup(t, scenario{host: "svc.test", systemDNS: lo, dohDNS: lo})
+	silent, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { silent.Close() })
+	h.cfg.InterceptionProbe = silent.LocalAddr().String()
+	h.cfg.Timeout = 4 * time.Second
+
+	start := time.Now()
+	rep := New(h.cfg).Run(context.Background(), []model.Target{{Host: "svc.test"}})
+	elapsed := time.Since(start)
+	if rep.Targets[0].Verdict != model.OK {
+		t.Fatalf("verdict = %s", rep.Targets[0].Verdict)
+	}
+	if elapsed >= h.cfg.Timeout {
+		t.Fatalf("run took %s; the interception probe should be capped below the %s timeout", elapsed, h.cfg.Timeout)
+	}
+	if rep.Targets[0].Duration >= interceptionTimeout {
+		t.Fatalf("target took %s; it should not wait for the interception probe", rep.Targets[0].Duration)
 	}
 }

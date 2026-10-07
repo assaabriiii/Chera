@@ -78,8 +78,14 @@ func Decide(in Input) Decision {
 	switch {
 	case pathD == nil && dnsD != nil:
 		return *dnsD
+	case pathD == nil && in.DNS.Dropped:
+		// Queries to every resolver, public ones included, vanish for this
+		// name only: something on the path drops them.
+		return *decide(model.DNSIntercepted, model.Medium, "dns.dropped")
 	case pathD == nil && in.DNS.Unresolvable && in.Outage != nil && in.Outage.Confirmed():
 		return *outageDecision(in.Outage)
+	case pathD == nil && in.DNS.Unresolvable && in.DNS.DoHUnavailable:
+		return *decide(model.Inconclusive, model.Low, "dns.unresolvable_nodoh")
 	case pathD == nil && in.DNS.Unresolvable:
 		return *decide(model.Inconclusive, model.Low, "dns.unresolvable")
 	case pathD == nil:
@@ -100,7 +106,13 @@ func Decide(in Input) Decision {
 func dnsDecision(in Input) *Decision {
 	a := in.DNS
 	intercepted := in.Intercept != nil && in.Intercept.Detected
-	mismatch := len(a.Suspects) > 0 && in.Verify != nil && in.Verify.Outcome != tlscheck.OK
+	mismatch := len(a.Suspects) > 0 && in.Verify != nil && suspectInvalid(in)
+	// The reasons name the reference: DoH, or a public plain resolver when
+	// DoH was unreachable.
+	plain := ""
+	if a.ReferenceKind != dnscheck.KindDoH {
+		plain = "_plain"
+	}
 
 	if a.Poisoned() || mismatch {
 		ip := first(a.BlockIPs, a.Bogons, a.Suspects)
@@ -110,7 +122,7 @@ func dnsDecision(in Input) *Decision {
 		case len(a.BlockIPs) > 0:
 			return decide(model.DNSPoisoned, model.High, "dns.block_ip", "ip", ip)
 		case len(a.Bogons) > 0:
-			return decide(model.DNSPoisoned, model.High, "dns.bogon", "ip", ip)
+			return decide(model.DNSPoisoned, model.High, "dns.bogon"+plain, "ip", ip)
 		default:
 			return decide(model.DNSPoisoned, model.Medium, "dns.mismatch", "ip", ip)
 		}
@@ -119,10 +131,25 @@ func dnsDecision(in Input) *Decision {
 	case "":
 		return nil
 	case "nxdomain", "noanswer":
-		return decide(model.DNSPoisoned, model.Medium, "dns.nxdomain")
+		return decide(model.DNSPoisoned, model.Medium, "dns.nxdomain"+plain)
 	default:
-		return decide(model.DNSPoisoned, model.Low, "dns.failed", "error", a.SystemFailure)
+		return decide(model.DNSPoisoned, model.Low, "dns.failed"+plain, "error", a.SystemFailure)
 	}
+}
+
+// suspectInvalid reports whether the handshake to the system resolver's
+// differing address shows that it does not serve the host. A server that
+// answers with a wrong certificate or an alert proves it. A network
+// failure proves it only when the reference address works; otherwise both
+// may simply be blocked the same way (SNI filtering hits every address).
+func suspectInvalid(in Input) bool {
+	switch v := in.Verify; {
+	case v.Outcome == tlscheck.OK:
+		return false
+	case v.Reached():
+		return true
+	}
+	return in.TLS != nil && in.TLS.Real.Outcome == tlscheck.OK
 }
 
 // pathDecision judges the connection to the verified addresses. It returns

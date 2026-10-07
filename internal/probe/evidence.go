@@ -60,7 +60,7 @@ func evidence(st *run) []model.Evidence {
 		a := st.analysis
 		answers := append([]dnscheck.Answer{st.dns.System}, st.dns.Public...)
 		answers = append(answers, st.dns.DoH...)
-		for _, ans := range answers {
+		for i, ans := range answers {
 			if ans.Resolver == "" {
 				continue
 			}
@@ -74,7 +74,7 @@ func evidence(st *run) []model.Evidence {
 					status = model.Fail
 				}
 			}
-			if ans.Kind == dnscheck.KindSystem && len(a.Suspects) > 0 {
+			if i == 0 && len(a.Suspects) > 0 { // the resolver under test
 				status = model.Warn
 			}
 			add("dns", ans.Resolver, status, "%s in %s", addrList(ans.Addrs), ms(ans.Duration))
@@ -90,6 +90,16 @@ func evidence(st *run) []model.Evidence {
 			add("dns", "analysis", model.Fail, "no resolver returned an address")
 		default:
 			add("dns", "analysis", model.Pass, "reference addresses from %s: %s", a.ReferenceKind, addrList(a.Reference))
+		}
+		if a.DoHUnavailable {
+			add("dns", "doh", model.Warn, "no DoH resolver could be reached; reference addresses come from plain DNS, which is less trustworthy")
+		}
+		if c := st.control; c != nil {
+			if a.Dropped {
+				add("dns", "control", model.Fail, "every resolver timed out for %s, but they answer %s: queries for this name are dropped", st.target.Host, c.Host)
+			} else {
+				add("dns", "control", model.Warn, "resolvers also time out for %s: plain DNS is not working at all", c.Host)
+			}
 		}
 		if a.InjectedPublic {
 			add("dns", "injection", model.Fail, "plain UDP queries to public resolvers get rewritten answers; DoH does not")

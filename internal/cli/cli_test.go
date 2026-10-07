@@ -156,3 +156,26 @@ func TestListPresetsAndVersion(t *testing.T) {
 		t.Fatalf("version: %s", out)
 	}
 }
+
+func TestMainInterrupted(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var out, errOut bytes.Buffer
+	env := Env{
+		Out: &out, Err: &errOut,
+		Getenv:  func(k string) string { return map[string]string{"CHERA_NO_USER_CONFIG": "1"}[k] },
+		Context: ctx,
+		Run: func(ctx context.Context, cfg probe.Config, targets []model.Target) *model.Report {
+			cancel() // Ctrl-C arrives while the checks run
+			return fakeRun(model.IPBlocked)(ctx, cfg, targets)
+		},
+	}
+	if code := Main([]string{"github.com"}, env); code != ExitInterrupted {
+		t.Fatalf("code = %d, want %d", code, ExitInterrupted)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("a report was printed after the interruption:\n%s", out.String())
+	}
+	if !strings.Contains(errOut.String(), "interrupted") {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+}

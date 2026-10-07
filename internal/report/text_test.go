@@ -108,3 +108,18 @@ func TestWidth(t *testing.T) {
 		t.Fatal("pad")
 	}
 }
+
+func TestNotesAreTranslated(t *testing.T) {
+	r := &model.Report{Local: model.LocalSummary{Up: false, DefaultRoute: true, DownReason: "no_interface", DoHUnreachable: true}}
+	en := strings.Join(Notes(r, i18n.New(i18n.EN)), "\n")
+	if !strings.Contains(en, "No active network interface") {
+		t.Errorf("down reason not reported: %q", en)
+	}
+	if !strings.Contains(en, "DNS-over-HTTPS") {
+		t.Errorf("DoH note missing: %q", en)
+	}
+	fa := strings.Join(Notes(r, i18n.New(i18n.FA)), "\n")
+	if strings.Contains(fa, "No active") || !strings.Contains(fa, "هیچ رابط شبکه فعالی") {
+		t.Errorf("Persian note not translated: %q", fa)
+	}
+}

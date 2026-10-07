@@ -23,6 +23,13 @@ type Answer struct {
 // OK reports whether the resolver returned addresses.
 func (a Answer) OK() bool { return a.Err == nil && len(a.Addrs) > 0 }
 
+// Answered reports whether the resolver returned a DNS response, even a
+// negative one, rather than failing to reach the server.
+func (a Answer) Answered() bool {
+	var rc RCodeError
+	return a.Err == nil || errors.Is(a.Err, ErrNXDomain) || errors.Is(a.Err, ErrNoAnswer) || errors.As(a.Err, &rc)
+}
+
 // FailureKind classifies a failed lookup: "nxdomain", "noanswer",
 // "timeout", "refused" or "error".
 func (a Answer) FailureKind() string {
@@ -110,6 +117,17 @@ type Analysis struct {
 	SystemFailure string
 	// Unresolvable is true when no resolver returned any address.
 	Unresolvable bool
+	// DoHUnavailable is true when DoH resolvers were configured but none of
+	// them answered at all (network or HTTP errors, not DNS errors), so
+	// the reference, if any, comes from plain DNS.
+	DoHUnavailable bool
+	// AllPlainTimeout is true when the system resolver and every public
+	// resolver timed out for this name.
+	AllPlainTimeout bool
+	// Dropped is set by the caller when AllPlainTimeout holds while the
+	// same resolvers answer a control name: queries for this name are
+	// dropped on the path.
+	Dropped bool
 }
 
 // Poisoned reports whether the answers alone prove poisoning.
@@ -170,6 +188,22 @@ func Analyze(r Result, sigs *signatures.Set) Analysis {
 	}
 	if len(a.Reference) == 0 && len(a.BlockIPs) == 0 && len(a.Bogons) == 0 {
 		a.Unresolvable = true
+	}
+	if len(r.DoH) > 0 {
+		a.DoHUnavailable = true
+		for _, ans := range r.DoH {
+			if ans.Answered() {
+				a.DoHUnavailable = false
+			}
+		}
+	}
+	if len(r.Public) > 0 {
+		a.AllPlainTimeout = true
+		for _, ans := range plain {
+			if ans.Resolver != "" && ans.FailureKind() != "timeout" {
+				a.AllPlainTimeout = false
+			}
+		}
 	}
 	return a
 }

@@ -110,7 +110,9 @@ type TargetReport struct {
 // LocalSummary is the privacy-safe view of the local network layer that is
 // included in reports. It never contains local IP addresses.
 type LocalSummary struct {
-	Up            bool     `json:"up"`
+	Up bool `json:"up"`
+	// DownReason is one of the localnet Down* reasons when Up is false.
+	DownReason    string   `json:"down_reason,omitempty"`
 	DefaultRoute  bool     `json:"default_route"`
 	Interfaces    []string `json:"interfaces"`
 	VPNInterfaces []string `json:"vpn_interfaces,omitempty"`
@@ -119,7 +121,10 @@ type LocalSummary struct {
 	Reachable     []string `json:"reachable_baseline"`
 	Unreachable   []string `json:"unreachable_baseline,omitempty"`
 	DNSIntercept  bool     `json:"dns_interception"`
-	ProxyFlag     bool     `json:"proxy_flag"`
+	// DoHUnreachable is true when no DoH reference resolver answered for
+	// any target, so DNS checks fell back to plain resolvers.
+	DoHUnreachable bool `json:"doh_unreachable"`
+	ProxyFlag      bool `json:"proxy_flag"`
 }
 
 // Report is everything a run produced.
