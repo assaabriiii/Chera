@@ -146,7 +146,7 @@ chera --lang fa                # خروجی فارسی
 | `OK` | سرویس اصلی از مسیر تأییدشده پاسخ داد. | مشکلی نیست. |
 | `LOCAL_NETWORK_DOWN` | رابط شبکه فعال یا مسیر پیش‌فرض وجود ندارد، یا هیچ میزبان شناخته‌شده‌ای در دسترس نیست. | اول Wi-Fi، کابل، مودم یا روتر را درست کنید. |
 | `DNS_POISONED` | DNS شما آدرس صفحه مسدودسازی، آدرس خصوصی، آدرسی که این سایت را سرو نمی‌کند، یا «نام وجود ندارد» برمی‌گرداند، در حالی که DNS-over-HTTPS پاسخ درست می‌دهد. | استفاده از DNS رمزنگاری‌شده (DoH/DoT). |
-| `DNS_INTERCEPTED` | ترافیک DNS در مسیر ربوده می‌شود؛ تغییر آدرس سرور DNS کمکی نمی‌کند. | استفاده از DNS رمزنگاری‌شده (DoH/DoT). |
+| `DNS_INTERCEPTED` | ترافیک DNS در مسیر ربوده یا برای این نام دور ریخته می‌شود؛ تغییر آدرس سرور DNS کمکی نمی‌کند. | استفاده از DNS رمزنگاری‌شده (DoH/DoT). |
 | `IP_BLOCKED` | اتصال به آدرس‌های درست سرویس به پایان مهلت می‌رسد: بسته‌ها بی‌صدا دور ریخته می‌شوند. | تغییر DNS کمکی نمی‌کند؛ از mirror استفاده کنید. |
 | `CONNECTION_RESET` | اتصال به آدرس‌های درست فعالانه رد یا ریست می‌شود. | تغییر DNS کمکی نمی‌کند؛ از mirror استفاده کنید. |
 | `SNI_FILTERED` | دست‌دهی TLS درست پس از ClientHello برای نام واقعی قطع می‌شود، در حالی که همان آدرس به نام دیگری پاسخ می‌دهد. | تغییر DNS کمکی نمی‌کند؛ از mirror استفاده کنید. |
@@ -191,7 +191,7 @@ chera --lang fa                # خروجی فارسی
 | `python` | pypi.org، files.pythonhosted.org |
 | `node` | registry.npmjs.org |
 | `docker` | registry-1.docker.io، auth.docker.io، production.cloudflare.docker.com |
-| `huggingface` | huggingface.co، cdn-lfs.huggingface.co |
+| `huggingface` | huggingface.co، cdn-lfs.hf.co، cas-bridge.xethub.hf.co |
 | `ai` | api.openai.com، api.anthropic.com، generativelanguage.googleapis.com |
 | `go` | proxy.golang.org |
 | `rust` | crates.io |

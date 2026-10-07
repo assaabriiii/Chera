@@ -32,7 +32,7 @@ func TestResolveCounts(t *testing.T) {
 		{"docker", 3},
 		{"ai", 3},
 		{"dev", 12},
-		{"all", 18},
+		{"all", 19},
 	}
 	for _, tt := range tests {
 		t.Run(tt.preset, func(t *testing.T) {

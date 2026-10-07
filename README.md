@@ -168,7 +168,7 @@ on the way (for example DNS poisoning on top of SNI filtering), it is listed as
 | `OK` | The real service answered over a verified path. | Nothing to fix. |
 | `LOCAL_NETWORK_DOWN` | No active interface, no default route, or no well-known host is reachable at all. | Fix Wi-Fi, cable, modem or router first. |
 | `DNS_POISONED` | Your resolver returns a block-page address, a private address, an address that does not serve the site, or claims the name does not exist, while DNS-over-HTTPS resolves it correctly. | Use an encrypted resolver (DoH/DoT). |
-| `DNS_INTERCEPTED` | DNS traffic is hijacked on the path: a query to an address that runs no DNS server got an answer, or queries to public resolvers are rewritten. Changing the resolver IP will not help. | Use an encrypted resolver (DoH/DoT). |
+| `DNS_INTERCEPTED` | DNS traffic is hijacked on the path: a query to an address that runs no DNS server got an answer, queries to public resolvers are rewritten, or queries for this name are dropped while other names resolve. Changing the resolver IP will not help. | Use an encrypted resolver (DoH/DoT). |
 | `IP_BLOCKED` | Connections to the service's correct addresses time out: packets are silently dropped. | DNS changes will not help; use a mirror. |
 | `CONNECTION_RESET` | Connections to the correct addresses are actively refused or reset. | DNS changes will not help; use a mirror. |
 | `SNI_FILTERED` | The TLS handshake dies right after the ClientHello for the real name, while the same address answers another name. | DNS changes will not help; use a mirror. |
@@ -227,7 +227,7 @@ guide explains every layer for developers who are not network experts.
 | `python` | pypi.org, files.pythonhosted.org |
 | `node` | registry.npmjs.org |
 | `docker` | registry-1.docker.io, auth.docker.io, production.cloudflare.docker.com |
-| `huggingface` | huggingface.co, cdn-lfs.huggingface.co |
+| `huggingface` | huggingface.co, cdn-lfs.hf.co, cas-bridge.xethub.hf.co |
 | `ai` | api.openai.com, api.anthropic.com, generativelanguage.googleapis.com |
 | `go` | proxy.golang.org |
 | `rust` | crates.io |

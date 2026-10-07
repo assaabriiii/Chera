@@ -190,6 +190,45 @@ func TestDecide(t *testing.T) {
 			in.Speed = &speed.Result{Throttled: true, Kind: "handshake"}
 		}, model.Throttled, model.Medium, "speed.handshake", nil},
 		{"speed fine", func(in *Input) { in.Speed = &speed.Result{} }, model.OK, model.High, "ok.http", nil},
+		{"dns mismatch with network failure while reference works", func(in *Input) {
+			in.DNS.Suspects = testutil.Addrs("31.13.64.1")
+			in.Verify = &tlscheck.Handshake{Outcome: tlscheck.ConnectFailed}
+		}, model.DNSPoisoned, model.Medium, "dns.mismatch", nil},
+		{"suspect blocked like the reference is not poisoning", func(in *Input) {
+			// A CDN address from the local resolver is SNI-filtered exactly
+			// like the reference address: that says nothing about DNS.
+			in.DNS.Suspects = testutil.Addrs("151.101.128.223")
+			in.Verify = &tlscheck.Handshake{Outcome: tlscheck.Reset}
+			in.TLS = &tlscheck.Result{
+				Real:    tlscheck.Handshake{Outcome: tlscheck.Reset},
+				Neutral: &tlscheck.Handshake{Outcome: tlscheck.OK},
+			}
+			in.HTTP = nil
+		}, model.SNIFiltered, model.High, "tls.sni_reset", nil},
+		{"dns nxdomain with plain reference", func(in *Input) {
+			in.DNS.ReferenceKind = dnscheck.KindUDP
+			in.DNS.SystemFailure = "nxdomain"
+		}, model.DNSPoisoned, model.Medium, "dns.nxdomain_plain", nil},
+		{"dns bogon with plain reference", func(in *Input) {
+			in.DNS.ReferenceKind = dnscheck.KindUDP
+			in.DNS.Bogons = testutil.Addrs("192.168.1.1")
+		}, model.DNSPoisoned, model.High, "dns.bogon_plain", nil},
+		{"dns timeout with plain reference", func(in *Input) {
+			in.DNS.ReferenceKind = dnscheck.KindUDP
+			in.DNS.SystemFailure = "timeout"
+		}, model.DNSPoisoned, model.Low, "dns.failed_plain", nil},
+		{"unresolvable without doh", func(in *Input) {
+			in.DNS = dnscheck.Analysis{Unresolvable: true, DoHUnavailable: true}
+			in.TCP, in.TLS, in.HTTP = nil, nil, nil
+		}, model.Inconclusive, model.Low, "dns.unresolvable_nodoh", nil},
+		{"queries dropped for this name only", func(in *Input) {
+			in.DNS = dnscheck.Analysis{Unresolvable: true, DoHUnavailable: true, AllPlainTimeout: true, Dropped: true}
+			in.TCP, in.TLS, in.HTTP = nil, nil, nil
+		}, model.DNSIntercepted, model.Medium, "dns.dropped", nil},
+		{"all plain dns down is not dropping", func(in *Input) {
+			in.DNS = dnscheck.Analysis{Unresolvable: true, DoHUnavailable: true, AllPlainTimeout: true}
+			in.TCP, in.TLS, in.HTTP = nil, nil, nil
+		}, model.Inconclusive, model.Low, "dns.unresolvable_nodoh", nil},
 		{"http timeout with dns problem prefers dns", func(in *Input) {
 			in.DNS.BlockIPs = testutil.Addrs("10.10.34.35")
 			in.HTTP = &httpcheck.Result{Class: httpcheck.Failed, ErrKind: netx.KindTimeout, Err: context.DeadlineExceeded}

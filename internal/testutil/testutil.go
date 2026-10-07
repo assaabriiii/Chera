@@ -64,6 +64,17 @@ type DNSServer struct {
 // NewDNSServer starts a UDP DNS server on 127.0.0.1 answering from answers.
 func NewDNSServer(t testing.TB, answers Answers) *DNSServer {
 	t.Helper()
+	return NewDroppingDNSServer(t, answers)
+}
+
+// NewDroppingDNSServer is like NewDNSServer but never answers queries for
+// the names in drop, like a filter that silently discards them.
+func NewDroppingDNSServer(t testing.TB, answers Answers, drop ...string) *DNSServer {
+	t.Helper()
+	dropped := map[string]bool{}
+	for _, n := range drop {
+		dropped[strings.ToLower(n)] = true
+	}
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +89,9 @@ func NewDNSServer(t testing.TB, answers Answers) *DNSServer {
 				return
 			}
 			s.Queries.Add(1)
+			if q, err := dnswire.ParseQuestion(buf[:n]); err == nil && dropped[strings.ToLower(q.Name)] {
+				continue
+			}
 			if resp := answers.respond(buf[:n]); resp != nil {
 				pc.WriteTo(resp, from)
 			}

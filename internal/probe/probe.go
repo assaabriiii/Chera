@@ -63,6 +63,9 @@ type Config struct {
 	HTTPClient *http.Client
 	// SpeedBaselineURL is downloaded to compare throughput against.
 	SpeedBaselineURL string
+	// ControlName is resolved when every plain resolver times out for a
+	// target, to tell dropped queries apart from dead resolvers.
+	ControlName string
 }
 
 // Runner executes the pipeline.
@@ -98,7 +101,13 @@ func fillDefaults(cfg *Config) {
 	if cfg.SpeedBaselineURL == "" {
 		cfg.SpeedBaselineURL = speed.DefaultBaselineURL
 	}
+	if cfg.ControlName == "" {
+		cfg.ControlName = DefaultControlName
+	}
 }
+
+// DefaultControlName is a stable name that filters have no reason to block.
+const DefaultControlName = "example.com"
 
 // pinnedTransport returns an HTTP transport that uses cfg.Dialer and,
 // when addr is set, sends every connection to that verified address.
@@ -124,13 +133,38 @@ func New(cfg Config) *Runner {
 	return &Runner{cfg: cfg}
 }
 
+// interceptionTimeout caps the DNS interception probe. A hijacked query is
+// answered as fast as any other, so waiting the full per-operation timeout
+// for a reply that normally never comes only slows the run down.
+const interceptionTimeout = 2 * time.Second
+
 // shared holds results that are measured once per run, not per target.
+// intercept and local may only be read after done is closed.
 type shared struct {
+	done      chan struct{}
 	intercept *dnscheck.Interception
 	local     *localnet.Result
 
 	baselineOnce sync.Once
 	baseline     speed.Measurement
+
+	controlOnce sync.Once
+	control     dnscheck.Result
+}
+
+// controlResolves reports whether any plain resolver answers the control
+// name. It is looked up at most once per run.
+func (r *Runner) controlResolves(ctx context.Context, sh *shared) (dnscheck.Result, bool) {
+	sh.controlOnce.Do(func() {
+		rs := dnscheck.Resolvers{System: r.cfg.Resolvers.System, Public: r.cfg.Resolvers.Public}
+		sh.control = dnscheck.Resolve(ctx, r.cfg.ControlName, rs, r.cfg.Timeout)
+	})
+	for _, a := range append([]dnscheck.Answer{sh.control.System}, sh.control.Public...) {
+		if a.OK() {
+			return sh.control, true
+		}
+	}
+	return sh.control, false
 }
 
 // Run diagnoses all targets and returns the report. Targets keep their
@@ -145,41 +179,58 @@ func (r *Runner) Run(ctx context.Context, targets []model.Target) *model.Report 
 		Targets: make([]model.TargetReport, len(targets)),
 	}
 
-	var sh shared
-	var wg sync.WaitGroup
+	// The run-wide checks overlap with the per-target layers: the
+	// interception probe normally waits out its whole timeout, and nothing
+	// but the final verdict needs its result.
+	sh := &shared{done: make(chan struct{})}
+	var swg sync.WaitGroup
 	if r.cfg.InterceptionProbe != "" {
-		wg.Add(1)
+		swg.Add(1)
 		go func() {
-			defer wg.Done()
-			ic := dnscheck.CheckInterception(ctx, r.cfg.InterceptionProbe, r.cfg.Timeout)
+			defer swg.Done()
+			ic := dnscheck.CheckInterception(ctx, r.cfg.InterceptionProbe, min(r.cfg.Timeout, interceptionTimeout))
 			sh.intercept = &ic
 		}()
 	}
 	if r.cfg.Local != nil {
-		wg.Add(1)
+		swg.Add(1)
 		go func() {
-			defer wg.Done()
+			defer swg.Done()
 			lr := localnet.Check(ctx, *r.cfg.Local)
 			sh.local = &lr
 		}()
 	}
-	wg.Wait()
-	rep.Local = localSummary(&sh, r.cfg.ProxyInUse)
+	go func() {
+		swg.Wait()
+		close(sh.done)
+	}()
 
+	var wg sync.WaitGroup
+	dohDown := make([]bool, len(targets))
 	sem := make(chan struct{}, r.cfg.Concurrency)
 	for i, t := range targets {
 		wg.Add(1)
 		go func(i int, t model.Target) {
 			defer wg.Done()
 			sem <- struct{}{}
-			defer func() { <-sem }()
 			ts := time.Now()
-			tr := r.checkTarget(ctx, t, &sh)
-			tr.Duration = time.Since(ts)
+			st := r.checkTarget(ctx, t, sh)
+			d := time.Since(ts)
+			dohDown[i] = st.analysis.DoHUnavailable
+			<-sem
+			<-sh.done
+			tr := r.decide(st)
+			tr.Duration = d
 			rep.Targets[i] = tr
 		}(i, t)
 	}
 	wg.Wait()
+	<-sh.done
+	rep.Local = localSummary(sh, r.cfg.ProxyInUse)
+	rep.Local.DoHUnreachable = len(targets) > 0
+	for _, down := range dohDown {
+		rep.Local.DoHUnreachable = rep.Local.DoHUnreachable && down
+	}
 	rep.Duration = time.Since(start)
 	return rep
 }
@@ -190,8 +241,9 @@ func localSummary(sh *shared, proxy bool) model.LocalSummary {
 		ls.DNSIntercept = sh.intercept.Detected
 	}
 	if l := sh.local; l != nil {
-		down, _ := l.Down()
+		down, why := l.Down()
 		ls.Up = !down
+		ls.DownReason = why
 		ls.DefaultRoute = l.DefaultRoute
 		for _, i := range l.Interfaces {
 			if i.Up && !i.Loop && i.HasAddr {
@@ -219,8 +271,11 @@ type run struct {
 	dns      dnscheck.Result
 	analysis dnscheck.Analysis
 	resolved bool
-	tcp      []tcpcheck.Result
-	tls      *tlscheck.Result
+	// control is the lookup of a control name, done only when every plain
+	// resolver timed out for this target.
+	control *dnscheck.Result
+	tcp     []tcpcheck.Result
+	tls     *tlscheck.Result
 	// verify is a handshake to a suspect system-DNS address, checking
 	// whether it really serves this host.
 	verify *tlscheck.Handshake
@@ -237,13 +292,20 @@ func (r *Runner) addrPort(a netip.Addr) netip.AddrPort {
 	return netip.AddrPortFrom(a, uint16(r.cfg.Port))
 }
 
-func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) model.TargetReport {
+// checkTarget runs every layer for one target. It does not read the
+// run-wide results, which may still be in progress.
+func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) *run {
 	st := &run{target: t, shared: sh}
 
 	// Layer 2: DNS.
 	st.dns = dnscheck.Resolve(ctx, t.Host, r.cfg.Resolvers, r.cfg.Timeout)
 	st.analysis = dnscheck.Analyze(st.dns, r.cfg.Signatures)
 	st.resolved = true
+	if st.analysis.Unresolvable && st.analysis.AllPlainTimeout {
+		ctl, ok := r.controlResolves(ctx, sh)
+		st.control = &ctl
+		st.analysis.Dropped = ok
+	}
 
 	var wg sync.WaitGroup
 	if len(st.analysis.Suspects) > 0 {
@@ -302,6 +364,13 @@ func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) mo
 		st.outage = &o
 	}
 
+	return st
+}
+
+// decide combines a target's layer results with the run-wide ones. It must
+// only be called after the shared checks are done.
+func (r *Runner) decide(st *run) model.TargetReport {
+	sh := st.shared
 	d := verdict.Decide(verdict.Input{
 		Local:      sh.local,
 		Intercept:  sh.intercept,
@@ -315,7 +384,7 @@ func (r *Runner) checkTarget(ctx context.Context, t model.Target, sh *shared) mo
 		Signatures: r.cfg.Signatures,
 	})
 	return model.TargetReport{
-		Target:     t,
+		Target:     st.target,
 		Verdict:    d.Verdict,
 		Confidence: d.Confidence,
 		Reason:     d.Reason,

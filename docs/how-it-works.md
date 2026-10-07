@@ -100,6 +100,22 @@ seen at the same time, the verdict is `DNS_INTERCEPTED` rather than
 If the plain UDP queries to public resolvers come back with block-page
 addresses while DoH does not, that is also interception (injected answers).
 
+Some filters do not answer at all: they silently drop queries for blocked
+names, whatever resolver they are sent to. When the system resolver and
+every public resolver time out for a name, Chera looks up a control name
+(`example.com`) through the same resolvers. If that works, queries for the
+target name are being dropped on the path, which is also reported as
+`DNS_INTERCEPTED`: only encrypted DNS gets around it.
+
+### When DoH itself is blocked
+
+DoH servers can be filtered too, usually by SNI. When none of them can be
+reached, Chera falls back to the answers of the public plain resolvers as
+the reference, says so in a note, and words its explanations accordingly
+("a public resolver resolves it" instead of "DoH resolves it"). Plain DNS
+can be tampered with, so these results are less reliable; `--resolver
+https://...` adds a DoH server you know is reachable.
+
 ## Layer 3: TCP
 
 Chera connects to port 443 on up to two of the **correct** addresses (from
